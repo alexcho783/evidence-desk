@@ -460,12 +460,18 @@ function classify(r){
                              return {design:"Case–control",     tier:"cohort", src:"inferred"};
   if (re(/cross-sectional|prevalence survey|registry analysis|questionnaire survey/))
                              return {design:"Cross-sectional",  tier:"cohort", src:"inferred"};
+  if (re(/consecutive (series|patients|children)|case series|we (describe|report) \d+ (patients|children|cases)/))
+                             return {design:"Case series",      tier:"case",   src:"inferred"};
   if (re(/we report a case|index patient|we present a (patient|case)/))
                              return {design:"Case report",      tier:"case",   src:"inferred"};
   if (re(/simulation|mathematical model|computational model|in silico/))
                              return {design:"Modelling",        tier:"preclinical", src:"inferred"};
   if (re(/this review|we review|this article reviews|overview of/))
                              return {design:"Review",           tier:"narrative", src:"inferred"};
+  /* Commentaries are short and refer to another paper rather than reporting anything. */
+  if ((r.abstractText || "").length < 1200
+      && re(/in a recent issue|in this issue|this commentary|this perspective|accompanying (article|paper|trial)/))
+                             return {design:"Commentary",       tier:"narrative", src:"inferred"};
   return {design:"Design unclear", tier:"narrative", src:"inferred"};
 }
 
