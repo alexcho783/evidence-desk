@@ -149,7 +149,9 @@ function format(p, style){
 
   /* Vancouver */
   const a = vancouverAuthors(list);
-  const runs = [{t: `${a}${a ? ". " : ""}${title}. `}];
+  /* "et al." already carries its own full stop; a second one is a visible error. */
+  const aSep = a ? (a.endsWith(".") ? " " : ". ") : "";
+  const runs = [{t: `${a}${aSep}${title}. `}];
   if (jrnl) runs.push({t: `${jrnl}. `});
   runs.push({t: `${yr}` + (vi ? `;${vi}` : "") + (pg ? `:${pg}` : "") + "."});
   if (doi) runs.push({t: ` doi:${doi}`});
