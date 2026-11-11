@@ -47,6 +47,32 @@ publish directory to set.
 
 Nothing in the code assumes it is served from the root of a domain, so a subpath works fine.
 
+## Two sources
+
+A switch under the search box picks the literature, and changes both the database and the
+ranking ladder.
+
+| | Medicine | Psychology |
+| --- | --- | --- |
+| Database | Europe PMC | OpenAlex, filtered to `primary_topic.field.id:fields/32` |
+| Study design from | MEDLINE publication types (human indexers) | Title and abstract only |
+| Marked `inferred` | Only untagged records | **Always** |
+| Extra tiers | Guideline, Preclinical | Experiment, Survey, Qualitative |
+
+Europe PMC covers psychiatry but very little cognitive, social or developmental psychology,
+which is why the second source exists. The ladders differ because the fields do: a controlled
+lab experiment is central evidence in psychology and marginal in clinical medicine, and
+qualitative work is real evidence in one and rare in the other. Both ladders draw tiers from one
+shared table (`TIER`) with a per-source `rank`, so a reading list holding both still sorts.
+
+The asymmetry worth remembering: **psychology classification is weaker**, because OpenAlex
+carries no publication types. The interface says so on every card and on the *How it ranks* page.
+If that ever needs to improve, PsycINFO is the database that has the metadata — and it is
+paywalled by the APA.
+
+OpenAlex abstracts arrive as a word-to-positions inverted index, reconstructed by
+`fromInverted()`. Requests send no `mailto`, so nothing identifies the user to OpenAlex.
+
 ## How the data flows
 
 Literature comes from the [Europe PMC](https://europepmc.org) REST API, called straight from the

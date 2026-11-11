@@ -12,16 +12,49 @@ const API = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 const PAGE = 25;
 const Y = new Date().getFullYear();
 
-const TIERS = [
-  {k:"synthesis",   label:"Synthesis",   note:"Meta-analysis · systematic review", w:"strong"},
-  {k:"guideline",   label:"Guideline",   note:"Practice guideline · consensus",    w:"strong"},
-  {k:"trial",       label:"Trial",       note:"Randomised · controlled",           w:"strong"},
-  {k:"cohort",      label:"Observational", note:"Cohort · case–control · survey",  w:"mid"},
-  {k:"case",        label:"Case",        note:"Case report · series",              w:"weak"},
-  {k:"preclinical", label:"Preclinical", note:"Animal · in vitro · modelling",     w:"weak"},
-  {k:"narrative",   label:"Narrative",   note:"Review · comment · editorial",      w:"weak"}
-];
-const TIER = Object.fromEntries(TIERS.map(t => [t.k, t]));
+/* Two literatures, two ladders. Medicine and psychology do not rank evidence the same way:
+   a controlled lab experiment is central to psychology and marginal to clinical medicine,
+   qualitative work is real evidence in one and barely appears in the other. Relabelling a
+   medical ladder would misrepresent both, so each field gets its own, drawn from the same
+   shared set of tiers so a mixed reading list still sorts sensibly. */
+const TIER = {
+  synthesis:   {label:"Synthesis",     note:"Meta-analysis · systematic review", w:"strong", rank:0},
+  guideline:   {label:"Guideline",     note:"Practice guideline · consensus",    w:"strong", rank:1},
+  trial:       {label:"Trial",         note:"Randomised · controlled",           w:"strong", rank:2},
+  cohort:      {label:"Observational", note:"Cohort · case–control",             w:"mid",    rank:3},
+  experiment:  {label:"Experiment",    note:"Controlled lab study",              w:"mid",    rank:4},
+  survey:      {label:"Survey",        note:"Cross-sectional · correlational",   w:"weak",   rank:5},
+  qualitative: {label:"Qualitative",   note:"Interview · thematic analysis",     w:"weak",   rank:6},
+  case:        {label:"Case",          note:"Case report · series",              w:"weak",   rank:7},
+  preclinical: {label:"Preclinical",   note:"Animal · in vitro · modelling",     w:"weak",   rank:8},
+  narrative:   {label:"Narrative",     note:"Review · comment · editorial",      w:"weak",   rank:9}
+};
+
+const SOURCES = {
+  med: {
+    label:"Medicine", short:"Med", db:"Europe PMC",
+    ladder:["synthesis","guideline","trial","cohort","case","preclinical","narrative"],
+    overrides:{},
+    placeholder:"SGLT2 inhibitors heart failure mortality"
+  },
+  psy: {
+    label:"Psychology", short:"Psy", db:"OpenAlex",
+    ladder:["synthesis","trial","experiment","cohort","survey","qualitative","case","narrative"],
+    overrides:{ cohort:{label:"Longitudinal", note:"Prospective · follow-up"} },
+    placeholder:"working memory training transfer effects"
+  }
+};
+
+const src = () => SOURCES[S.source] || SOURCES.med;
+/* The active ladder, as a list of {k, label, note, w}. */
+function tiers(){
+  const s = src();
+  return s.ladder.map(k => ({ k, ...TIER[k], ...(s.overrides[k] || {}) }));
+}
+function tierMeta(k){
+  const s = src();
+  return { ...(TIER[k] || TIER.narrative), ...((s.overrides || {})[k] || {}) };
+}
 
 const ERAS = [
   {k:"old", label:"Before " + (Y-14), sub:"Older work",      test:y => y <  Y-14},
@@ -57,6 +90,7 @@ const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme"};
 const S = {
   view:"search",
   q:"", lastQ:"",
+  source:"med",
   design:"any", sort:"relevance", openOnly:false, yearFrom:"", yearTo:"",
   busy:false, loadingMore:false,
   results:[], hitCount:0, cursor:"*", exhausted:false,
@@ -334,6 +368,106 @@ function findN(r){
   return Number.isFinite(v) && v > 1 && v < 1e8 ? v : null;
 }
 
+/* ══ OpenAlex (psychology) ═══════════════════════════════════════════
+ * Europe PMC barely covers psychology outside psychiatry, so the psychology source is
+ * OpenAlex, filtered to its Psychology field. The trade is real and shows in the interface:
+ * OpenAlex carries no publication types, so every design here is read off the abstract and
+ * marked "inferred", where medicine gets its design from human indexers at the NLM. */
+
+const OPENALEX = "https://api.openalex.org/works";
+const PSYCH_FIELD = "primary_topic.field.id:fields/32";
+
+/* OpenAlex stores abstracts as a word -> positions map, for licensing reasons. */
+function fromInverted(inv){
+  if (!inv || typeof inv !== "object") return "";
+  const out = [];
+  for (const word of Object.keys(inv)) {
+    const positions = inv[word];
+    if (Array.isArray(positions)) for (const p of positions) out[p] = word;
+  }
+  return out.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function classifyPsy(title, abstract, type){
+  const t = ((title || "") + " " + (abstract || "")).toLowerCase();
+  const re = x => x.test(t);
+
+  if (re(/meta-analy|systematic review|meta-analytic/))
+    return {design: re(/meta-analy/) ? "Meta-analysis" : "Systematic review", tier:"synthesis"};
+  if (re(/randomi[sz]ed controlled trial|\brct\b|randomly assigned to (?:one of )?(?:two|three|the|a )|randomi[sz]ed to receive/))
+    return {design:"Randomised controlled trial", tier:"trial"};
+  if (re(/semi-structured interview|thematic analysis|grounded theory|focus group|qualitative (?:study|analysis|design)|interpretative phenomenological/))
+    return {design:"Qualitative study", tier:"qualitative"};
+  if (re(/within-subjects|between-subjects|participants were (?:randomly )?(?:assigned|allocated)|experiment [123]\b|in two experiments|counterbalanced|reaction times?|stimuli were/))
+    return {design:"Experiment", tier:"experiment"};
+  if (re(/longitudinal|cohort|follow-up (?:period|assessment|at)|across (?:three|four|five|two) waves|prospectively/))
+    return {design:"Longitudinal study", tier:"cohort"};
+  if (re(/cross-sectional|questionnaire|self-report measures|survey of|correlational|online panel/))
+    return {design:"Survey", tier:"survey"};
+  if (re(/case study|single case|case series/))
+    return {design:"Case study", tier:"case"};
+  if (type === "review" || re(/this review|we review|theoretical framework|narrative review|commentary/))
+    return {design:"Review", tier:"narrative"};
+  return {design:"Design unclear", tier:"narrative"};
+}
+
+function normalisePsy(w){
+  const abstract = fromInverted(w.abstract_inverted_index);
+  const title = String(w.display_name || w.title || "Untitled").replace(/\.$/, "");
+  const c = classifyPsy(title, abstract, w.type);
+  const srcInfo = (w.primary_location && w.primary_location.source) || {};
+  const doi = typeof w.doi === "string" ? w.doi.replace(/^https?:\/\/doi\.org\//, "") : "";
+  const authors = (w.authorships || []).map(a => (a.author && a.author.display_name) || "").filter(Boolean);
+  const pmid = ((w.ids || {}).pmid || "").replace(/^https?:\/\/pubmed\.ncbi\.nlm\.nih\.gov\//, "").replace(/\/$/, "");
+  return {
+    id: "OA:" + String(w.id || "").split("/").pop(),
+    title,
+    authors: authors.length > 3 ? authors[0] + " et al." : authors.join(", "),
+    journal: srcInfo.display_name || "",
+    year: w.publication_year || null,
+    doi, pmid,
+    citations: typeof w.cited_by_count === "number" ? w.cited_by_count : null,
+    openAccess: !!((w.open_access || {}).is_oa),
+    abstract,
+    design: c.design, tier: c.tier,
+    designSrc: "inferred",
+    n: findN({abstractText: abstract}),
+    url: doi ? "https://doi.org/" + doi : (w.id || ""),
+    epmc: w.id || "",
+    fullText: ((w.best_oa_location || {}).landing_page_url) || "",
+    source: "psy"
+  };
+}
+
+async function fetchOpenAlex(cursor){
+  const p = new URLSearchParams();
+  p.set("search", S.q.trim());
+  const filters = [PSYCH_FIELD];
+  if (S.openOnly) filters.push("is_oa:true");
+  const from = /^\d{4}$/.test(S.yearFrom) ? S.yearFrom : null;
+  const to   = /^\d{4}$/.test(S.yearTo)   ? S.yearTo   : null;
+  if (from || to) filters.push(`publication_year:${from || "1800"}-${to || Y}`);
+  p.set("filter", filters.join(","));
+  p.set("per-page", String(PAGE));
+  p.set("cursor", cursor || "*");
+  if (S.sort === "recent") p.set("sort", "publication_date:desc");
+  else if (S.sort === "cited") p.set("sort", "cited_by_count:desc");
+
+  let res;
+  try { res = await fetch(OPENALEX + "?" + p.toString(), {headers:{Accept:"application/json"}}); }
+  catch (e) { throw {kind: navigator.onLine === false ? "offline" : "network"}; }
+  if (res.status === 400 || res.status === 403) throw {kind:"badquery"};
+  if (res.status === 429) throw {kind:"rate"};
+  if (!res.ok) throw {kind:"server", status:res.status};
+  let data;
+  try { data = await res.json(); } catch(e) { throw {kind:"parse"}; }
+  return {
+    rows: (data.results || []).map(normalisePsy),
+    hitCount: (data.meta && data.meta.count) || 0,
+    next: (data.meta && data.meta.next_cursor) || null
+  };
+}
+
 /* ══ Europe PMC ═══════════════════════════════════════════ */
 
 function buildQuery(){
@@ -372,11 +506,13 @@ function normalise(r){
        : r.pmid ? "https://pubmed.ncbi.nlm.nih.gov/" + r.pmid + "/"
        : "https://europepmc.org/article/" + (r.source || "MED") + "/" + (r.id || ""),
     epmc: "https://europepmc.org/article/" + (r.source || "MED") + "/" + (r.id || ""),
-    fullText: ft.length ? ft[0].url : ""
+    fullText: ft.length ? ft[0].url : "",
+    source: "med"
   };
 }
 
 async function fetchPage(cursor){
+  if (S.source === "psy") return fetchOpenAlex(cursor);
   const p = new URLSearchParams({
     query: buildQuery(),
     format: "json",
@@ -450,12 +586,12 @@ async function loadMore(){
 
 function errCopy(e){
   switch (e.kind) {
-    case "offline":  return {t:"You're offline", d:"Evidence Desk reads Europe PMC live, so it needs a connection. Your reading list still works offline.", retry:true};
-    case "network":  return {t:"Couldn't reach Europe PMC", d:"The request didn't get through. This is usually temporary.", retry:true};
-    case "badquery": return {t:"Europe PMC couldn't read that query", d:"An unmatched quote or bracket will do it. Try plain words, or check the search tips under How it ranks.", retry:false};
-    case "rate":     return {t:"Too many searches too quickly", d:"Europe PMC is rate-limiting this browser. Wait a few seconds and try again.", retry:true};
-    case "server":   return {t:"Europe PMC returned an error", d:`The service answered with status ${e.status}. It may be briefly down — europepmc.org will say.`, retry:true};
-    case "parse":    return {t:"Unreadable response", d:"Europe PMC answered with something this page couldn't parse.", retry:true};
+    case "offline":  return {t:"You're offline", d:"Evidence Desk reads its sources live, so it needs a connection. Your reading list still works offline.", retry:true};
+    case "network":  return {t:`Couldn't reach ${src().db}`, d:"The request didn't get through. This is usually temporary.", retry:true};
+    case "badquery": return {t:`${src().db} couldn't read that query`, d:"An unmatched quote or bracket will do it. Try plain words, or check the search tips under How it ranks.", retry:false};
+    case "rate":     return {t:"Too many searches too quickly", d:`${src().db} is rate-limiting this browser. Wait a few seconds and try again.`, retry:true};
+    case "server":   return {t:`${src().db} returned an error`, d:`The service answered with status ${e.status}. It may be briefly down.`, retry:true};
+    case "parse":    return {t:"Unreadable response", d:`${src().db} answered with something this page couldn't parse.`, retry:true};
     default:         return {t:"Something went wrong", d:"The search didn't complete.", retry:true};
   }
 }
@@ -465,6 +601,7 @@ function errCopy(e){
 function pushUrl(){
   const p = new URLSearchParams();
   if (S.lastQ) p.set("q", S.lastQ);
+  if (S.source !== "med") p.set("src", S.source);
   if (S.design !== "any") p.set("design", S.design);
   if (S.sort !== "relevance") p.set("sort", S.sort);
   if (S.openOnly) p.set("oa", "1");
@@ -477,6 +614,7 @@ function pushUrl(){
 function readUrl(){
   const p = new URLSearchParams(location.search);
   S.q = p.get("q") || "";
+  S.source = SOURCES[p.get("src")] ? p.get("src") : "med";
   S.design = DESIGN_FILTERS.some(d => d.k === p.get("design")) ? p.get("design") : "any";
   S.sort = SORTS.some(s => s.k === p.get("sort")) ? p.get("sort") : "relevance";
   S.openOnly = p.get("oa") === "1";
@@ -507,7 +645,7 @@ function meta(p){
 }
 function card(p, idx){
   const saved = S.list.has(p.id);
-  const w = TIER[p.tier] ? TIER[p.tier].w : "weak";
+  const w = tierMeta(p.tier).w || "weak";
   const snip = p.abstract ? p.abstract.slice(0, 190).trim() + (p.abstract.length > 190 ? "…" : "") : "";
   return `<article class="card" id="card-${esc(p.id)}">
     <div class="rail" data-w="${w}" aria-hidden="true"></div>
@@ -526,8 +664,9 @@ function card(p, idx){
 
 function plot(rows){
   const placed = rows.filter(p => p.year);
-  const used = TIERS.filter(t => placed.some(p => p.tier === t.k));
-  const tiers = used.length ? used : TIERS.slice(0, 3);
+  const ladder = tiers();
+  const used = ladder.filter(t => placed.some(p => p.tier === t.k));
+  const rows_t = used.length ? used : ladder.slice(0, 3);
 
   const counts = ERAS.map(e => placed.filter(p => e.test(p.year)).length);
   const cols = counts.map(c => c ? "minmax(0,1fr)" : "minmax(0,0.42fr)").join(" ");
@@ -538,7 +677,7 @@ function plot(rows){
             <b>${esc(e.label)}</b><span>${counts[i] ? esc(e.sub) : "none"}</span></div>`;
   });
 
-  for (const t of tiers) {
+  for (const t of rows_t) {
     g += `<div class="p-rowhead ${t.w === "strong" ? "p-row-strong" : "p-row-weak"}">
             <b>${t.label}</b><span>${t.note}</span></div>`;
     for (const e of ERAS) {
@@ -576,7 +715,7 @@ function renderSearch(){
   const hero = `<div>
     <div class="eyebrow">Search the medical literature</div>
     <h1 class="hero-h">Not just what the papers say — <em>what kind of papers they are.</em></h1>
-    <p class="hero-sub">Every result is placed by study design and by how recent it is, so you can see at a glance whether a question is answered by current trials or by one old review. Literature from Europe PMC. ${
+    <p class="hero-sub">Every result is placed by study design and by how recent it is, so you can see at a glance whether a question is answered by current trials or by one old review. Literature from ${esc(src().db)}. ${
       (window.EDAuth && window.EDAuth.enabled)
         ? "No account needed; signing in syncs your reading list across devices."
         : "No account, nothing stored anywhere but your own browser."}</p>
@@ -585,14 +724,19 @@ function renderSearch(){
   <form id="search-form">
     <div class="bigfield">
       <label class="sr" for="q">Your search</label>
-      <textarea id="q" rows="2" placeholder="SGLT2 inhibitors heart failure mortality" autocomplete="off" enterkeyhint="search">${esc(S.q)}</textarea>
+      <textarea id="q" rows="2" placeholder="${esc(src().placeholder)}" autocomplete="off" enterkeyhint="search">${esc(S.q)}</textarea>
       <button class="btn-go" type="submit" ${S.busy ? "disabled" : ""}>${S.busy ? "Searching" : "Search"}</button>
     </div>
     <div class="filters">
+      <div class="seg" role="group" aria-label="Which literature to search">
+        ${Object.keys(SOURCES).map(k =>
+          `<button type="button" data-src="${k}" aria-pressed="${S.source === k}">${SOURCES[k].label}</button>`).join("")}
+      </div>
+      ${S.source === "med" ? `
       <label class="sr" for="f-design">Study design</label>
       <select class="sel" id="f-design">
         ${DESIGN_FILTERS.map(d => `<option value="${d.k}"${S.design === d.k ? " selected" : ""}>${d.label}</option>`).join("")}
-      </select>
+      </select>` : ""}
       <label class="sr" for="f-sort">Sort by</label>
       <select class="sel" id="f-sort">
         ${SORTS.map(s => `<option value="${s.k}"${S.sort === s.k ? " selected" : ""}>${s.label}</option>`).join("")}
@@ -629,7 +773,7 @@ function renderSearch(){
 
   let results = "";
   if (S.results.length) {
-    const strong = S.results.filter(p => TIER[p.tier] && TIER[p.tier].w === "strong").length;
+    const strong = S.results.filter(p => tierMeta(p.tier).w === "strong").length;
     results = `<div class="list-head">
         <span class="list-h">Results</span>
         <span class="list-n">${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above</span>
@@ -666,8 +810,8 @@ function listRows(){
       (p.journal||"").toLowerCase().includes(t) ||
       (p.note||"").toLowerCase().includes(t));
   }
-  const rank = Object.fromEntries(TIERS.map((t,i) => [t.k, i]));
-  rows.sort((a,b) => (rank[a.tier] - rank[b.tier]) || ((b.year||0) - (a.year||0)));
+  const rk = k => (TIER[k] || TIER.narrative).rank;
+  rows.sort((a,b) => (rk(a.tier) - rk(b.tier)) || ((b.year||0) - (a.year||0)));
   return rows;
 }
 
@@ -737,12 +881,27 @@ function renderAbout(){
 
     <h2>The rows</h2>
     <div class="ladder">
-      ${TIERS.map(t => `<div class="ladder-row" data-w="${t.w}"><i></i><b>${t.label}</b><span>${t.note}</span></div>`).join("")}
+      ${tiers().map(t => `<div class="ladder-row" data-w="${t.w}"><i></i><b>${t.label}</b><span>${t.note}</span></div>`).join("")}
     </div>
     <p>Rows near the top aggregate or control away more of the things that mislead — chance, confounding, selection. That ordering is a rule of thumb, not a law: a large well-run cohort can be worth more than a small poor trial, and for questions about rare harms or prognosis the observational rows are where the real evidence lives. A preclinical result is not weak science, it just does not answer a question about people.</p>
 
     <h2>The columns</h2>
     <p>Papers are grouped by publication era, oldest on the left. This answers a question clinicians ask constantly and search engines rarely show: <i>is the good evidence here still current?</i> A topic whose only synthesis sits in the left column, with all the trials on the right, is a topic where the summary has not caught up with the primary literature.</p>
+
+    <h2>Two literatures, two ladders</h2>
+    <p>The switch under the search box changes both where the papers come from and how they are
+      ranked. <b>Medicine</b> searches <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
+      <b>Psychology</b> searches <a href="https://openalex.org" target="_blank" rel="noopener">OpenAlex</a>,
+      restricted to its psychology field, because Europe PMC covers psychiatry but very little
+      cognitive, social or developmental work.</p>
+    <p>The ladders differ because the fields do. A controlled lab experiment is central evidence in
+      psychology and marginal in clinical medicine; qualitative work is real evidence in one and
+      rare in the other; animal and in-vitro studies matter in medicine and hardly appear here.
+      Relabelling one field's ladder for the other would misrepresent both, so each has its own.</p>
+    <p><b>Psychology classification is weaker, and you should treat it that way.</b> OpenAlex carries
+      no publication types, so on that side every design is read off the title and abstract and every
+      card says <i>inferred</i>. On the medicine side most designs come from human indexers at the US
+      National Library of Medicine. Same interface, genuinely different reliability.</p>
 
     <h2>Where the classification comes from</h2>
     <p>Most records carry publication types assigned by indexers at the US National Library of Medicine — <code>Randomized Controlled Trial</code>, <code>Meta-Analysis</code>, <code>Practice Guideline</code> and so on. Those are used directly and are reliable.</p>
@@ -1075,7 +1234,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes");
+  const t = ev.target.closest("[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
@@ -1088,6 +1247,14 @@ document.addEventListener("click", (ev) => {
   if (t.id === "wipe-ask") { S.account.confirmWipe = true; render(); return; }
   if (t.id === "wipe-no")  { S.account.confirmWipe = false; render(); return; }
   if (t.id === "wipe-yes") { deleteAccount(); return; }
+  if (t.dataset.src) {
+    if (S.source === t.dataset.src) return;
+    S.source = t.dataset.src;
+    S.design = "any";              /* Europe PMC's design filter has no OpenAlex equivalent. */
+    S.results = []; S.hitCount = 0; S.cursor = "*"; S.exhausted = false; S.err = null;
+    if (S.lastQ) runSearch(S.lastQ); else { pushUrl(); render(); }
+    return;
+  }
   if (t.dataset.redo) { runSearch(S.lastQ || S.q); return; }
   if (t.dataset.go)   { go(t.dataset.go); return; }
   if (t.dataset.ex)   { S.q = t.dataset.ex; runSearch(S.q); return; }
