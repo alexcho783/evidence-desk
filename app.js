@@ -618,8 +618,13 @@ async function fetchOpenAlex(cursor, signal){
   let res;
   try { res = await fetch(OPENALEX + "?" + p.toString(), {headers:{Accept:"application/json"}, signal}); }
   catch (e) { if (aborted(e)) throw e; throw {kind: navigator.onLine === false ? "offline" : "network"}; }
-  if (res.status === 400 || res.status === 403) throw {kind:"badquery"};
-  if (res.status === 429) throw {kind:"rate"};
+  if (res.status === 429) throw {kind:"psyquota"};
+  if (res.status === 400 || res.status === 403) {
+    /* 400 is always a malformed query. 403 is either that or a refused caller, and only
+       the body says which, so it is read before deciding what to tell the reader. */
+    const body = res.status === 403 ? await res.text().catch(() => "") : "";
+    throw /limit|quota|too many|exceed/i.test(body) ? {kind:"psyquota"} : {kind:"badquery"};
+  }
   if (!res.ok) throw {kind:"server", status:res.status};
   let data;
   try { data = await res.json(); } catch(e) { throw {kind:"parse"}; }
@@ -944,6 +949,8 @@ function errCopy(e){
     case "offline":  return {t:"You're offline", d:"Evidence Desk reads its sources live, so it needs a connection. Your reading list still works offline.", retry:true};
     case "network":  return {t:`Couldn't reach ${src().db}`, d:"The request didn't get through. This is usually temporary.", retry:true};
     case "badquery": return {t:`${src().db} couldn't read that query`, d:"An unmatched quote or bracket will do it. Try plain words, or check the search tips under How it ranks.", retry:false};
+    case "psyquota": return {t:"Psychology search has reached today's free limit",
+                             d:"OpenAlex caps how much anonymous traffic it serves in a day, and that cap is shared with everyone else using it. Medicine and Trials are unaffected and still work.", retry:true};
     case "rate":     return {t:"Too many searches too quickly", d:`${src().db} is rate-limiting this browser. Wait a few seconds and try again.`, retry:true};
     case "server":   return {t:`${src().db} returned an error`, d:`The service answered with status ${e.status}. It may be briefly down.`, retry:true};
     case "notfound": return {t:"That paper isn't in OpenAlex", d:"Similar papers are computed by OpenAlex, which does not index every record Europe PMC holds.", retry:false};
