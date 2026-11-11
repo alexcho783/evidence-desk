@@ -95,9 +95,21 @@ states all of this to visitors.
 
 ## Storage
 
-The reading list, notes and recent searches live in `localStorage`, under the keys
-`ed-reading-list`, `ed-recent` and `ed-theme`. They never leave the browser, which also means they
-do not sync between devices — hence the BibTeX and RIS export buttons.
+Two kinds of state, with deliberately different lifetimes:
+
+| What | Where | Key | Lifetime |
+| --- | --- | --- | --- |
+| Reading list and notes | `localStorage` | `ed-reading-list` | Until cleared |
+| Theme choice | `localStorage` | `ed-theme` | Until cleared |
+| Recent searches | `sessionStorage` | `ed-recent` | Until the browser closes |
+
+Search history is session-scoped on purpose. A reading list is something you chose to keep; your
+search history is not, and on a shared computer it should not be sitting there for whoever opens
+the browser next. There is also a **Clear** control beside the list in the sidebar. `loadList()`
+removes any `ed-recent` left in `localStorage` by earlier versions, so history that leaked under
+the old behaviour is cleaned up the first time someone loads the new build.
+
+Nothing syncs between devices, which is what the BibTeX and RIS exports are for.
 
 Every read and write is wrapped in `try`/`catch`, so the site works in a private window or with
 site data blocked.

@@ -46,18 +46,17 @@
 </svg>
 
 <aside class="sidebar">
-  <div class="brand">
+  <button class="brand" id="home-side" type="button" title="Start a new search">
     <svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg>
     <span class="brand-name">Evidence Desk</span>
-  </div>
+  </button>
   <div class="side-scroll">
     <nav class="nav" aria-label="Sections">
       <button class="nav-item" data-go="search"><svg aria-hidden="true"><use href="#i-search"/></svg>Search</button>
       <button class="nav-item" data-go="list"><svg aria-hidden="true"><use href="#i-books"/></svg>Reading list<span class="nav-count" id="c-list"></span></button>
       <button class="nav-item" data-go="about"><svg aria-hidden="true"><use href="#i-info"/></svg>How it ranks</button>
     </nav>
-    <div class="side-head">Recent searches</div>
-    <nav class="recent" id="recent" aria-label="Recent searches"></nav>
+    <div id="recent-block"></div>
   </div>
   <div class="side-foot">
     Literature from <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
@@ -67,7 +66,7 @@
 
 <div class="content">
   <header class="topbar">
-    <div class="brand-compact"><svg aria-hidden="true"><use href="#i-mark"/></svg>Evidence&nbsp;Desk</div>
+    <button class="brand-compact" id="home-top" type="button" title="Start a new search"><svg aria-hidden="true"><use href="#i-mark"/></svg>Evidence&nbsp;Desk</button>
     <label class="field">
       <svg aria-hidden="true"><use href="#i-search"/></svg>
       <span class="sr">Filter your reading list</span>

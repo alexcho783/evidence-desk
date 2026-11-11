@@ -1,6 +1,6 @@
 /* Evidence Desk — public edition
  * Literature from Europe PMC (https://europepmc.org). No account, no server, no tracking.
- * Everything saved stays in this browser's localStorage.
+ * Reading list and notes persist in localStorage; recent searches are session-scoped.
  */
 (() => {
 "use strict";
@@ -94,6 +94,24 @@ function store(key, val){
   return null;
 }
 
+/* Recent searches are deliberately session-scoped. The reading list is something you
+   choose to keep; your search history is not, and on a shared computer it must not
+   outlive the browsing session or be readable by whoever sits down next. */
+function sessionStore(key, val){
+  try {
+    if (val === undefined) {
+      const raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }
+    sessionStorage.setItem(key, JSON.stringify(val));
+  } catch(e){}
+  return null;
+}
+function purge(key){
+  try { localStorage.removeItem(key); } catch(e){}
+  try { sessionStorage.removeItem(key); } catch(e){}
+}
+
 let toastT = null;
 function toast(msg){
   $("toast-root").innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`;
@@ -120,13 +138,23 @@ function toast(msg){
 function loadList(){
   const raw = store(LS.list) || [];
   S.list = new Map(raw.map(p => [p.id, p]));
-  S.recent = store(LS.recent) || [];
+  /* Earlier versions kept recent searches in localStorage, where they survived the
+     browser closing and were there for whoever opened it next. Clear anything left
+     behind by those versions before reading the session-scoped copy. */
+  try { localStorage.removeItem(LS.recent); } catch(e){}
+  S.recent = sessionStore(LS.recent) || [];
 }
 function saveList(){ store(LS.list, [...S.list.values()]); }
 
 function addRecent(q){
   S.recent = [q, ...S.recent.filter(x => x !== q)].slice(0, 8);
-  store(LS.recent, S.recent);
+  sessionStore(LS.recent, S.recent);
+}
+function clearRecent(){
+  S.recent = [];
+  purge(LS.recent);
+  render();
+  toast("Search history cleared.");
 }
 
 /* ══ Classification ═══════════════════════════════════════════
@@ -480,6 +508,7 @@ function renderSearch(){
         <span class="list-h">Results</span>
         <span class="list-n">${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above</span>
         <span style="flex:1"></span>
+        <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
         <button class="btn btn-sm" id="save-all">${svg("i-plus")}Save all shown</button>
       </div>
       ${plot(S.results)}
@@ -586,7 +615,9 @@ function renderAbout(){
     </ul>
 
     <h2>Data and privacy</h2>
-    <p>Literature comes from the <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a> REST API, called straight from your browser. There is no server in between and no account. Your searches, your reading list and your notes are held in this browser's local storage and are never sent anywhere — which also means they do not follow you to another device, so export anything you want to keep.</p>
+    <p>Literature comes from the <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a> REST API, called straight from your browser. There is no server in between and no account, so nothing you do here is sent anywhere or logged.</p>
+    <p>Two different things are stored, with deliberately different lifetimes. Your <b>reading list and notes</b> persist in this browser until you clear them — they are meant to be kept, which also means they do not follow you to another device, so export anything that matters. Your <b>recent searches</b> are held only for the current browsing session and disappear when you close the browser; there is a <b>Clear</b> control beside them in the sidebar for removing them sooner.</p>
+    <p>On a shared or public computer, bear in mind that the reading list is deliberately persistent and the next person using that browser will see it. Clear it from the reading list page before you walk away, or use a private window.</p>
   </div>`;
 }
 
@@ -661,9 +692,15 @@ function render(){
       b.setAttribute("aria-current", b.dataset.go === S.view ? "page" : "false");
   });
   $("c-list").textContent = S.list.size || "";
-  $("recent").innerHTML = S.recent.length
-    ? S.recent.map(q => `<button type="button" data-ex="${esc(q)}" title="${esc(q)}">${esc(q)}</button>`).join("")
-    : `<p style="font-size:12px;color:var(--faint);padding:2px 9px 0;line-height:1.4">Searches you run appear here.</p>`;
+  $("recent-block").innerHTML = `
+    <div class="side-head-row">
+      <span class="side-head">Recent searches</span>
+      ${S.recent.length ? `<button type="button" id="clear-recent">Clear</button>` : ""}
+    </div>
+    ${S.recent.length
+      ? `<nav class="recent" aria-label="Recent searches">${S.recent.map(q =>
+          `<button type="button" data-ex="${esc(q)}" title="${esc(q)}">${esc(q)}</button>`).join("")}</nav>`
+      : `<p class="recent-note">Searches you run appear here, and are cleared when you close the browser.</p>`}`;
 
   const f = $("q-list");
   if (f.value !== S.filter) f.value = S.filter;
@@ -675,6 +712,21 @@ function go(view, opts){
   S.view = view;
   $("scroll").scrollTop = 0;
   if (!(opts && opts.silent)) { pushUrl(); render(); }
+}
+
+/* Back to a clean slate: no query, no results, filters at their defaults and a bare
+   URL. The reading list and your theme survive, since neither belongs to one search. */
+function home(){
+  S.q = ""; S.lastQ = "";
+  S.results = []; S.hitCount = 0; S.cursor = "*"; S.exhausted = false;
+  S.busy = false; S.loadingMore = false; S.err = null;
+  S.design = "any"; S.sort = "relevance"; S.openOnly = false;
+  S.yearFrom = ""; S.yearTo = "";
+  S.filter = ""; S.open = null; S.confirmDel = false; S.confirmClear = false;
+  S.view = "search";
+  history.pushState({}, "", location.pathname);
+  $("scroll").scrollTop = 0;
+  render();
 }
 
 /* ══ Export ═══════════════════════════════════════════ */
@@ -724,9 +776,11 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear");
+  const t = ev.target.closest("[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent");
   if (!t) return;
 
+  if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
+  if (t.id === "clear-recent") { clearRecent(); return; }
   if (t.dataset.redo) { runSearch(S.lastQ || S.q); return; }
   if (t.dataset.go)   { go(t.dataset.go); return; }
   if (t.dataset.ex)   { S.q = t.dataset.ex; runSearch(S.q); return; }

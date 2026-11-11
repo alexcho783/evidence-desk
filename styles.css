@@ -81,7 +81,17 @@ h1,h2,h3{text-wrap:balance; margin:0}
   width:244px; flex:0 0 244px; display:none; flex-direction:column;
   background:var(--surface-2); border-right:1px solid var(--line-soft); padding-block:18px 12px;
 }
-.brand{display:flex; align-items:center; gap:9px; padding:0 18px 18px}
+.brand{display:flex; align-items:center; gap:9px; padding:4px 18px 18px;
+  width:100%; text-align:left; color:inherit; border-radius:var(--r-s)}
+.brand:hover .brand-name{color:var(--accent-ink)}
+.brand-compact:hover{color:var(--accent-ink)}
+
+/* Recent searches: session-scoped, with a visible way to clear them. */
+.side-head-row{display:flex; align-items:baseline; gap:8px; padding:22px 19px 7px}
+.side-head-row .side-head{padding:0; flex:1}
+.side-head-row button{font-size:11px; font-weight:600; color:var(--faint); letter-spacing:.02em}
+.side-head-row button:hover{color:var(--weak)}
+.recent-note{font-size:11px; color:var(--faint); padding:6px 19px 0; line-height:1.45}
 .brand-mark{width:26px; height:26px; flex:0 0 26px; color:var(--accent)}
 .brand-name{font-size:15px; font-weight:600; letter-spacing:-.015em}
 .nav{display:flex; flex-direction:column; gap:2px; padding:0 10px}
