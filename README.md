@@ -4,12 +4,16 @@ A medical literature search that sorts what it finds by **what kind of study eac
 rather than only by relevance. Every result is placed on a grid: study-design strength down the
 vertical axis, publication era across the horizontal.
 
-Three static files, no build step, no dependencies, no server, no account, no tracking.
+Static files, no build step, no framework, no tracking. Accounts are optional and off by
+default; left alone, the site has no backend at all.
 
 ```
-index.html    markup and icons
-styles.css    design tokens and layout
-app.js        retrieval, classification, rendering
+index.html           markup and icons
+styles.css           design tokens and layout
+app.js               retrieval, classification, rendering
+config.js            account sync settings — blank by default, which disables accounts
+auth.js              Supabase wrapper; loads nothing unless config.js is filled in
+supabase-setup.sql   table, row-level security and account deletion
 ```
 
 ## Run it locally
@@ -109,7 +113,55 @@ the browser next. There is also a **Clear** control beside the list in the sideb
 removes any `ed-recent` left in `localStorage` by earlier versions, so history that leaked under
 the old behaviour is cleaned up the first time someone loads the new build.
 
-Nothing syncs between devices, which is what the BibTeX and RIS exports are for.
+With accounts switched off nothing syncs between devices, which is what the BibTeX and RIS
+exports are for.
+
+## Optional: accounts
+
+Off by default. Switching them on lets people sign in and keep their reading list across
+devices; everyone else carries on exactly as before, and the sign-in option simply isn't shown.
+
+**1. Create a Supabase project** at [supabase.com](https://supabase.com) — the free tier is
+enough. Pick a region near your users.
+
+**2. Run the SQL.** Open SQL Editor → New query, paste all of `supabase-setup.sql`, Run. This
+creates the table, switches on row-level security, and adds the account-deletion function. The
+commented-out checks at the bottom confirm it worked.
+
+**3. Fill in `config.js`** with the Project URL and the **anon** key from Settings → API.
+
+The anon key is designed to be public and belongs in client code — committing it is fine. It
+grants nothing on its own; row-level security is what keeps one person's rows away from
+everyone else. Never put the `service_role` key here: it bypasses those policies entirely.
+
+**4. Set the redirect URL.** In Authentication → URL Configuration, set Site URL to where the
+site is actually served (for example `https://yourname.github.io/evidence-desk/`) and add it
+under Redirect URLs. Sign-in links bounce off this, so a wrong value here is the usual reason
+a link lands on a blank page.
+
+**5. Email sending is the part that bites.** Supabase's built-in email service is rate-limited
+to a handful of messages per hour and is meant for development. For anything public, either
+set up custom SMTP (Authentication → Emails; [Resend](https://resend.com) has a free tier), or
+enable Google sign-in instead and set `enableGoogle: true`, which avoids sending email
+altogether.
+
+**6. Set `contactEmail`** so the privacy page can tell people who holds their data.
+
+### If you switch accounts on, you take on data protection duties
+
+Storing other people's email addresses and reading lists makes you a data controller under UK
+GDPR. The site ships with what that mostly requires: a privacy page saying exactly what is
+stored and why, and a delete button that removes the account and its rows for good. What it
+cannot do for you is be truthful on your behalf — keep the privacy page accurate if you change
+what is stored, and put a real address in `contactEmail`.
+
+Two deliberate choices worth keeping if you edit this:
+
+- **Signing out wipes the local copy**, so a shared computer is not left showing one person's
+  list to the next. The exception is a list that never finished syncing, which is kept, because
+  deleting it would destroy the only copy.
+- **Deletion is real deletion.** `delete_my_account()` removes the rows and the auth user in one
+  transaction. There is no soft-delete and no recovery.
 
 Every read and write is wrapped in `try`/`catch`, so the site works in a private window or with
 site data blocked.

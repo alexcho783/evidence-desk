@@ -62,7 +62,10 @@ const S = {
   err:null,
   list:new Map(), recent:[],
   filter:"",
-  open:null, confirmDel:false, confirmClear:false
+  open:null, confirmDel:false, confirmClear:false,
+  /* Accounts are optional; everything below stays inert when config.js is blank. */
+  account:{user:null, busy:false, note:"", synced:false, sent:"", confirmWipe:false},
+  signIn:false
 };
 
 /* ══ Helpers ═══════════════════════════════════════════ */
@@ -145,6 +148,123 @@ function loadList(){
   S.recent = sessionStore(LS.recent) || [];
 }
 function saveList(){ store(LS.list, [...S.list.values()]); }
+
+/* The in-memory list is what the page renders. localStorage is a mirror, so the list is
+   there instantly on load and keeps working offline. When someone is signed in the same
+   change also goes to their account, in the background — a failure there degrades to
+   "saved on this device" rather than losing the change. */
+function persist(change){
+  saveList();
+  const A = window.EDAuth;
+  if (!A || !A.enabled || !A.user()) return;
+  const fail = e => {
+    S.account.note = (e && e.message) || "That change is saved on this device only.";
+    render();
+  };
+  try {
+    if (change.type === "upsert")      A.upsert(change.item).catch(fail);
+    else if (change.type === "bulk")   A.bulkUpsert(change.items).catch(fail);
+    else if (change.type === "delete") A.remove(change.id).catch(fail);
+    else if (change.type === "clear")  A.clear().catch(fail);
+  } catch (e) { fail(e); }
+}
+
+/* ══ Account sync ═══════════════════════════════════════════ */
+
+async function syncAfterSignIn(){
+  const A = window.EDAuth;
+  S.account.busy = true; S.account.note = ""; S.account.synced = false;
+  render();
+  try {
+    const local = [...S.list.values()];
+    const remote = await A.fetchList();
+    const byId = new Map((remote || []).map(p => [p.id, p]));
+    /* Papers saved on this device before signing in are merged up rather than dropped.
+       Where both sides have the same paper the account's copy wins, since it may carry
+       a note written on another device. */
+    const toPush = local.filter(p => !byId.has(p.id));
+    if (toPush.length) await A.bulkUpsert(toPush);
+    for (const p of toPush) byId.set(p.id, p);
+    S.list = byId;
+    saveList();
+    S.account.synced = true;
+    S.account.note = toPush.length
+      ? `${toPush.length} paper${toPush.length === 1 ? "" : "s"} from this device added to your account.`
+      : "";
+  } catch (e) {
+    S.account.note = (e && e.message) || "Couldn't load your saved papers.";
+  }
+  S.account.busy = false;
+  render();
+}
+
+async function signInGoogle(){
+  try { await window.EDAuth.signInWithGoogle(); }
+  catch (e) { S.account.note = (e && e.message) || "Couldn't start Google sign-in."; renderSheet(); }
+}
+
+async function sendMagicLink(email){
+  S.account.busy = true; S.account.note = ""; renderSheet();
+  try {
+    await window.EDAuth.signInWithEmail(email);
+    S.account.sent = email;
+  } catch (e) {
+    S.account.note = (e && e.message) || "Couldn't send the sign-in link.";
+  }
+  S.account.busy = false;
+  renderSheet();
+}
+
+async function deleteAccount(){
+  S.account.busy = true; S.account.wiped = true; render();
+  try {
+    await window.EDAuth.deleteAccount();
+    S.list.clear();
+    try { localStorage.removeItem(LS.list); } catch(e){}
+    S.account.confirmWipe = false;
+    S.account.synced = false;
+    S.account.note = "";
+    toast("Your account and everything saved to it have been deleted.");
+  } catch (e) {
+    S.account.wiped = false;
+    S.account.note = (e && e.message) || "Couldn't delete the account.";
+  }
+  S.account.busy = false;
+  render();
+}
+
+function onAuthChange(){
+  const A = window.EDAuth;
+  const u = A ? A.user() : null;
+  const was = S.account.user;
+  S.account.user = u;
+
+  if (u && (!was || was.id !== u.id)) {
+    S.signIn = false; S.account.sent = "";
+    syncAfterSignIn();
+    return;
+  }
+  if (!u && was) {
+    if (S.account.wiped) { S.account.wiped = false; render(); return; }
+    /* Signing out has to leave nothing behind, or accounts would make the shared-computer
+       problem worse rather than better. The one exception is a list that never finished
+       syncing: wiping that would destroy the only copy. */
+    if (S.account.synced) {
+      S.list.clear();
+      try { localStorage.removeItem(LS.list); } catch(e){}
+      S.account.note = "";
+      toast("Signed out. This device has been cleared.");
+    } else {
+      S.account.note = "";
+      toast("Signed out. Your saved papers stayed on this device — they hadn't finished syncing.");
+    }
+    S.account.synced = false;
+    S.account.confirmWipe = false;
+    render();
+    return;
+  }
+  render();
+}
 
 function addRecent(q){
   S.recent = [q, ...S.recent.filter(x => x !== q)].slice(0, 8);
@@ -362,7 +482,7 @@ function readUrl(){
   S.yearFrom = /^\d{4}$/.test(p.get("from") || "") ? p.get("from") : "";
   S.yearTo = /^\d{4}$/.test(p.get("to") || "") ? p.get("to") : "";
   const v = p.get("v");
-  S.view = (v === "list" || v === "about") ? v : "search";
+  S.view = (v === "list" || v === "about" || v === "privacy") ? v : "search";
 }
 
 /* ══ Shared rendering ═══════════════════════════════════════════ */
@@ -545,19 +665,44 @@ function listRows(){
   return rows;
 }
 
+/* One line about where the list actually lives, which changes with the sign-in state. */
+function syncBanner(){
+  const A = window.EDAuth;
+  if (!A || !A.enabled) return "";
+  if (S.account.busy) {
+    return `<div class="banner"><span class="spin" aria-hidden="true"></span>
+      <span class="grow">Syncing your reading list…</span></div>`;
+  }
+  const u = S.account.user;
+  if (u) {
+    return `<div class="banner"><span class="sync-dot" aria-hidden="true"></span>
+      <span class="grow"><b>Synced</b> to ${esc(u.email)} — your saved papers follow you to any device you sign in on.</span>
+      ${S.account.note ? `<span style="flex-basis:100%;color:var(--muted)">${esc(S.account.note)}</span>` : ""}</div>`;
+  }
+  return `<div class="banner">${svg("i-alert")}
+    <span class="grow"><b>Saved on this device only.</b> Sign in and your reading list follows you to another computer or phone.</span>
+    <button class="btn btn-sm btn-primary" id="sign-in-open" type="button">Sign in</button></div>`;
+}
+
 function renderList(){
   const all = [...S.list.values()];
+  const accounts = !!(window.EDAuth && window.EDAuth.enabled);
   if (!all.length) {
     $("view-list").innerHTML = `<div class="eyebrow">Reading list</div>
+      ${syncBanner()}
       <div class="empty">${svg("i-books")}<h3>Nothing saved yet</h3>
-      <p>Save a paper from any search and it is kept in this browser, with its study design and your own note. Nothing is uploaded; clearing your browser data clears this.</p>
+      <p>Save a paper from any search and it is kept with its study design and your own note.${
+        accounts ? " Signed out, that means this browser only." : " It stays in this browser; clearing your browser data clears this."}</p>
       <button class="btn btn-primary" data-go="search">${svg("i-search")}Search for something</button></div>`;
     return;
   }
   const rows = listRows();
   $("view-list").innerHTML = `<div class="eyebrow">Reading list</div>
     <h1 class="hero-h" style="font-size:clamp(24px,3.4vw,31px)">${all.length} paper${all.length === 1 ? "" : "s"} saved</h1>
-    <p class="hero-sub" style="margin-top:8px">Kept in this browser only. Export them before you switch computer.</p>
+    <p class="hero-sub" style="margin-top:8px">${S.account.user
+      ? "Synced to your account, and exportable whenever you want a copy of your own."
+      : "Kept in this browser. Export them before you switch computer."}</p>
+    ${syncBanner()}
     <div class="filters" style="padding-bottom:16px;border-bottom:1px solid var(--line-soft);margin-top:16px">
       <button class="btn btn-sm" data-export="bib">${svg("i-down")}BibTeX</button>
       <button class="btn btn-sm" data-export="ris">${svg("i-down")}RIS</button>
@@ -625,6 +770,7 @@ function renderAbout(){
 
 function renderSheet(){
   const root = $("sheet-root");
+  if (S.signIn) { renderSignInSheet(); return; }
   if (!S.open) { root.innerHTML = ""; return; }
   const saved = S.list.get(S.open.id);
   const p = saved || S.open;
@@ -677,15 +823,154 @@ function renderSheet(){
   setTimeout(() => { const b = document.querySelector("#sheet-x"); if (b) b.focus(); }, 10);
 }
 
+/* ══ Account UI ═══════════════════════════════════════════ */
+
+function renderFoot(){
+  const A = window.EDAuth;
+  const u = S.account.user;
+  let acct = "";
+  if (A && A.enabled) {
+    acct = u
+      ? `<div class="acct">
+           <span class="sync-dot" aria-hidden="true"></span>
+           <span class="acct-who" title="${esc(u.email)}">${esc(u.email)}</span>
+           <button class="btn btn-sm" id="sign-out" type="button">Sign out</button>
+         </div>`
+      : `<button class="btn btn-sm btn-primary" id="sign-in-open" type="button" style="width:100%">Sign in to sync</button>`;
+  }
+  $("side-foot").innerHTML = acct + `
+    <p style="margin:${acct ? "10px" : "0"} 0 0">
+      Literature from <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
+      ${u ? "Your reading list syncs to your account."
+          : "Nothing you search or save leaves this browser."}
+      ${A && A.enabled ? ` <button class="linkish" type="button" data-go="privacy">Privacy</button>.` : ""}
+    </p>`;
+}
+
+function renderSignInSheet(){
+  const A = window.EDAuth;
+  const sent = S.account.sent;
+  $("sheet-root").innerHTML = `<div class="backdrop" id="bd-signin"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Sign in">
+    <div class="grabber" aria-hidden="true"></div>
+    <div class="sheet-top">
+      <h2>Sign in</h2>
+      <button class="icon-btn" id="signin-x" type="button" aria-label="Close">${svg("i-x")}</button>
+    </div>
+    <div class="sheet-body">
+      ${sent ? `
+        <h3 class="sheet-title">Check your email</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:10px">A sign-in link is on its way to
+          <b>${esc(sent)}</b>. Open it on this device and you're in — there's no password to remember.
+          The link works once and expires after an hour.</p>
+        <p class="fineprint">Nothing arrived? Look in spam, then
+          <button class="linkish" type="button" id="signin-again">try a different address</button>.</p>
+      ` : `
+        <h3 class="sheet-title">Keep your reading list across devices</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:10px">Signing in is optional. Without it
+          everything stays in this browser, which is how the site works by default and is fine if you
+          only ever use one computer.</p>
+        ${A && A.googleEnabled ? `
+          <button class="btn" id="google-in" type="button" style="width:100%;margin-top:18px">Continue with Google</button>
+          <div class="or">or</div>`
+        : `<div style="height:18px"></div>`}
+        <form id="email-form">
+          <label class="sr" for="email-in">Email address</label>
+          <input class="signin-in" id="email-in" type="email" required autocomplete="email"
+                 inputmode="email" placeholder="you@example.com">
+          <button class="btn btn-primary" type="submit" style="width:100%;margin-top:9px"
+            ${S.account.busy ? "disabled" : ""}>${S.account.busy ? "Sending…" : "Email me a sign-in link"}</button>
+        </form>
+        <p class="fineprint">Signing in stores your email address and the papers you save, so they can
+          be shown back to you on another device. Nothing else is collected, there is no tracking, and
+          you can delete all of it whenever you like from the
+          <button class="linkish" type="button" data-go="privacy">privacy page</button>.</p>
+      `}
+      ${S.account.note ? `<div class="notice" style="margin-top:16px">${svg("i-alert")}<div>${esc(S.account.note)}</div></div>` : ""}
+    </div>
+  </div>`;
+  setTimeout(() => {
+    const el = document.querySelector("#email-in") || document.querySelector("#signin-x");
+    if (el) el.focus();
+  }, 10);
+}
+
+function renderPrivacy(){
+  const A = window.EDAuth;
+  const on = !!(A && A.enabled);
+  const u = S.account.user;
+  const contact = (A && A.contactEmail) || "";
+
+  $("view-privacy").innerHTML = `<div class="eyebrow">Privacy</div>
+  <h1 class="hero-h" style="font-size:clamp(24px,3.4vw,31px)">What this site stores</h1>
+  <div class="prose" style="margin-top:20px">
+    <p>Evidence Desk is built to hold as little about you as it can. Searching needs no account, and
+      without one nothing about you is stored anywhere except your own browser.</p>
+
+    <h2>Without an account</h2>
+    <ul>
+      <li>Your <b>reading list and notes</b> stay in this browser until you clear them.</li>
+      <li>Your <b>recent searches</b> are kept only for the current browsing session and are gone once
+        you close the browser.</li>
+      <li>Your search terms go to <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>,
+        because that is where the literature is. They go nowhere else, and this site keeps no record of them.</li>
+      <li>No analytics, no advertising, no third-party tracking, no cookies of our own.</li>
+    </ul>
+
+    <h2>With an account</h2>
+    ${on ? `
+    <p>Signing in is optional and exists for one reason: so your reading list follows you to another
+      device. If you sign in, two things are stored on a server:</p>
+    <ul>
+      <li>Your <b>email address</b>, used only to identify you and send sign-in links. No marketing, ever.</li>
+      <li>The <b>papers you save</b>, with your notes, tags and reading status.</li>
+    </ul>
+    <p>That is the whole list. Your searches are still not recorded. The data sits in a
+      <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a> database, and a
+      row-level security policy means the database itself refuses to return one person's rows to
+      anyone else — the separation is enforced where the data lives, not by the code in your browser.</p>
+    <p>Signing out clears the copy held on the device you were using, so a shared computer is not left
+      showing your list to the next person.</p>
+    ` : `<p>Accounts are not switched on for this site, so there is no server and nothing is stored
+      away from your browser at all.</p>`}
+
+    <h2>Deleting everything</h2>
+    ${on ? `
+    <p>You can clear the reading list on this device at any time from the reading list page. If you
+      have an account, the button below removes your saved papers <i>and</i> the account itself,
+      immediately and for good. Nothing is kept, and there is no recovery.</p>
+    ${u ? (S.account.confirmWipe
+      ? `<div class="confirm" style="margin:14px 0">${svg("i-alert")}
+           <span class="grow">Delete your account and every paper saved to it? This cannot be undone.</span>
+           <button class="btn btn-sm btn-quiet" id="wipe-no" type="button">Keep</button>
+           <button class="btn btn-sm btn-danger" id="wipe-yes" type="button">Delete everything</button>
+         </div>`
+      : `<p><button class="btn btn-danger" id="wipe-ask" type="button">${svg("i-trash")}Delete my account and data</button></p>`)
+      : `<p style="color:var(--faint)">Sign in to see the account deletion option.</p>`}
+    ${contact ? `<p>You can also ask for a copy of your data, or have it deleted, by emailing
+      <a href="mailto:${esc(contact)}">${esc(contact)}</a>.</p>`
+      : `<p>If you are running this site yourself, set <code>contactEmail</code> in <code>config.js</code>
+         so people have somewhere to write.</p>`}
+    ` : `<p>Clear the reading list from the reading list page, or clear this site's data in your
+      browser settings. There is nothing stored elsewhere to delete.</p>`}
+
+    <h2>Children and medical decisions</h2>
+    <p>This site is a literature search tool, not medical advice, and nothing here should be used to
+      make a decision about anyone's care. It is not designed or intended for use by children.</p>
+  </div>`;
+}
+
 /* ══ Shell ═══════════════════════════════════════════ */
 
 function render(){
-  $("view-search").hidden = S.view !== "search";
-  $("view-list").hidden   = S.view !== "list";
-  $("view-about").hidden  = S.view !== "about";
-  if (S.view === "search") renderSearch();
-  if (S.view === "list")   renderList();
-  if (S.view === "about")  renderAbout();
+  $("view-search").hidden  = S.view !== "search";
+  $("view-list").hidden    = S.view !== "list";
+  $("view-about").hidden   = S.view !== "about";
+  $("view-privacy").hidden = S.view !== "privacy";
+  if (S.view === "search")  renderSearch();
+  if (S.view === "list")    renderList();
+  if (S.view === "about")   renderAbout();
+  if (S.view === "privacy") renderPrivacy();
 
   document.querySelectorAll("[data-go]").forEach(b => {
     if (b.classList.contains("nav-item") || b.classList.contains("tab"))
@@ -705,6 +990,7 @@ function render(){
   const f = $("q-list");
   if (f.value !== S.filter) f.value = S.filter;
   $("q-list-clear").hidden = !S.filter;
+  renderFoot();
   renderSheet();
 }
 
@@ -776,11 +1062,19 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent");
+  const t = ev.target.closest("[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
   if (t.id === "clear-recent") { clearRecent(); return; }
+  if (t.id === "sign-in-open") { S.signIn = true; S.account.sent = ""; S.account.note = ""; renderSheet(); return; }
+  if (t.id === "signin-x" || t.id === "bd-signin") { S.signIn = false; S.account.note = ""; renderSheet(); return; }
+  if (t.id === "signin-again") { S.account.sent = ""; S.account.note = ""; renderSheet(); return; }
+  if (t.id === "google-in") { signInGoogle(); return; }
+  if (t.id === "sign-out") { if (window.EDAuth) window.EDAuth.signOut(); return; }
+  if (t.id === "wipe-ask") { S.account.confirmWipe = true; render(); return; }
+  if (t.id === "wipe-no")  { S.account.confirmWipe = false; render(); return; }
+  if (t.id === "wipe-yes") { deleteAccount(); return; }
   if (t.dataset.redo) { runSearch(S.lastQ || S.q); return; }
   if (t.dataset.go)   { go(t.dataset.go); return; }
   if (t.dataset.ex)   { S.q = t.dataset.ex; runSearch(S.q); return; }
@@ -793,8 +1087,9 @@ document.addEventListener("click", (ev) => {
   if (t.dataset.save) {
     const p = S.results.find(x => x.id === t.dataset.save);
     if (p && !S.list.has(p.id)) {
-      S.list.set(p.id, {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ});
-      saveList(); render(); toast("Saved to reading list.");
+      const item = {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ};
+      S.list.set(p.id, item);
+      persist({type:"upsert", item}); render(); toast("Saved to reading list.");
     }
     return;
   }
@@ -819,25 +1114,29 @@ document.addEventListener("click", (ev) => {
   switch (t.id) {
     case "more": loadMore(); break;
     case "save-all": {
-      let n = 0;
+      const added = [];
       for (const p of S.results) if (!S.list.has(p.id)) {
-        S.list.set(p.id, {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ}); n++;
+        const item = {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ};
+        S.list.set(p.id, item); added.push(item);
       }
-      if (n) { saveList(); render(); }
-      toast(n ? `${n} paper${n === 1 ? "" : "s"} saved.` : "Those are all saved already.");
+      if (added.length) { persist({type:"bulk", items:added}); render(); }
+      toast(added.length ? `${added.length} paper${added.length === 1 ? "" : "s"} saved.` : "Those are all saved already.");
       break;
     }
     case "sheet-x": case "bd": S.open = null; S.confirmDel = false; renderSheet(); break;
     case "sheet-save": {
       const p = S.open;
-      S.list.set(p.id, {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ});
-      saveList(); render(); toast("Saved to reading list.");
+      const item = {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ};
+      S.list.set(p.id, item);
+      persist({type:"upsert", item}); render(); toast("Saved to reading list.");
       break;
     }
     case "del-ask": S.confirmDel = true; renderSheet(); break;
     case "del-no":  S.confirmDel = false; renderSheet(); break;
     case "del-yes": {
-      S.list.delete(S.open.id); saveList();
+      const gone = S.open.id;
+      S.list.delete(gone);
+      persist({type:"delete", id:gone});
       S.open = null; S.confirmDel = false; render(); toast("Removed.");
       break;
     }
@@ -845,7 +1144,8 @@ document.addEventListener("click", (ev) => {
       const el = document.querySelector("#note");
       const cur = S.list.get(S.open.id);
       if (cur && el) {
-        cur.note = el.value; saveList();
+        cur.note = el.value;
+        persist({type:"upsert", item:cur});
         const st = document.querySelector("#note-state");
         if (st) { st.textContent = "Note saved"; setTimeout(() => { if (st) st.textContent = ""; }, 2000); }
       }
@@ -854,7 +1154,9 @@ document.addEventListener("click", (ev) => {
     case "clear-ask": S.confirmClear = true; render(); break;
     case "clear-no":  S.confirmClear = false; render(); break;
     case "clear-yes": {
-      S.list.clear(); saveList(); S.confirmClear = false; render(); toast("Reading list cleared.");
+      S.list.clear();
+      persist({type:"clear"});
+      S.confirmClear = false; render(); toast("Reading list cleared.");
       break;
     }
     case "q-list-clear": S.filter = ""; render(); $("q-list").focus(); break;
@@ -862,6 +1164,13 @@ document.addEventListener("click", (ev) => {
 });
 
 document.addEventListener("submit", (ev) => {
+  if (ev.target.id === "email-form") {
+    ev.preventDefault();
+    const el = document.querySelector("#email-in");
+    const v = ((el && el.value) || "").trim();
+    if (v) sendMagicLink(v);
+    return;
+  }
   if (ev.target.id === "search-form") {
     ev.preventDefault();
     const el = $("q");
@@ -892,6 +1201,7 @@ document.addEventListener("change", (ev) => {
 });
 
 document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && S.signIn) { ev.preventDefault(); S.signIn = false; S.account.note = ""; renderSheet(); return; }
   if (ev.key === "Escape" && S.open) { ev.preventDefault(); S.open = null; S.confirmDel = false; renderSheet(); }
   if (ev.key === "Enter" && !ev.shiftKey && ev.target.id === "q") {
     ev.preventDefault(); runSearch(ev.target.value);
@@ -910,5 +1220,12 @@ loadList();
 readUrl();
 render();
 if (S.q) runSearch(S.q, {keepUrl:true});
+
+/* Accounts, when configured. The page is already rendered and usable by this point;
+   signing in only ever adds to it. */
+if (window.EDAuth && window.EDAuth.enabled) {
+  window.EDAuth.onChange(onAuthChange);
+  window.EDAuth.ready.then(ok => { if (ok) onAuthChange(); });
+}
 
 })();
