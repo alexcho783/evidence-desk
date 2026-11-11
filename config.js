@@ -28,5 +28,5 @@ window.ED_CONFIG = {
 
   // Shown in the privacy notice so people know who holds their data. Required by UK GDPR
   // if you run this with accounts switched on.
-  contactEmail: ""
+  contactEmail: "alexanderchohj@gmail.com"
 };
