@@ -403,6 +403,7 @@ function classify(r){
   const types = new Set(((r.pubTypeList && r.pubTypeList.pubType) || []).map(t => String(t).toLowerCase()));
   const has = (...xs) => xs.some(x => types.has(x));
   const txt = ((r.title || "") + " " + (r.abstractText || "")).toLowerCase();
+  const ttl = String(r.title || "").toLowerCase();
   const re = x => x.test(txt);
 
   if (has("meta-analysis"))      return {design:"Meta-analysis",   tier:"synthesis", src:"metadata"};
@@ -418,6 +419,26 @@ function classify(r){
   }
   if (has("case reports"))       return {design:"Case report",     tier:"case", src:"metadata"};
   if (has("observational study")) return {design:"Observational study", tier:"cohort", src:"metadata"};
+  /* One deliberate exception to "metadata always wins": Europe PMC's Review type is a
+     coarse supertype that covers systematic reviews and narrative ones alike, and it does
+     not apply Systematic Review to most of them. So a specific synthesis phrase upgrades a
+     Review, while anything more specific above has already returned.
+     The title is trusted on its own. In the abstract the phrase must sit next to a verb of
+     conducting, otherwise a trial that merely cites a meta-analysis would match. */
+  const synthTitle = /systematic review|meta-analys|meta analys|network meta|umbrella review/.test(ttl);
+  const synthBody = re(/\b(we|this (study|review|paper|article))\b[^.]{0,60}(systematic review|meta-analys|meta analys)/)
+    || re(/\b(conducted|performed|undertook|report)\b[^.]{0,40}(systematic review|meta-analys|meta analys)/)
+    || re(/\bprisma\b/);
+  if (synthTitle || synthBody) {
+    /* The title decides when it says anything; only a body-triggered match falls back
+       to the body, or a plain systematic review is called a meta-analysis. */
+    const isMeta = /meta-analys|meta analys|network meta/.test(ttl)
+      || (!synthTitle && re(/\bmeta-analys/));
+    return {design: isMeta ? "Meta-analysis" : "Systematic review", tier:"synthesis", src:"inferred"};
+  }
+  if (/scoping review|narrative review|literature review/.test(ttl))
+    return {design:"Review", tier:"narrative", src:"inferred"};
+
   /* Every indexed type is checked before any keyword guess. A record Europe PMC types as a
      review must never come back as a trial because its abstract mentions randomisation. */
   if (has("review","review-article")) return {design:"Review", tier:"narrative", src:"metadata"};
