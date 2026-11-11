@@ -928,7 +928,12 @@ function renderPrivacy(){
     <p>That is the whole list. Your searches are still not recorded. The data sits in a
       <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a> database, and a
       row-level security policy means the database itself refuses to return one person's rows to
-      anyone else — the separation is enforced where the data lives, not by the code in your browser.</p>
+      another — the separation is enforced where the data lives, not by the code in your browser.</p>
+    <p>One thing worth stating plainly, because it is true of any site like this one: whoever runs it
+      can see what is stored, saved papers and notes included, through the database's own
+      administration tools. Row-level security separates people from each other, not from the
+      operator. A reading list on a medical topic can reveal something about the person keeping it,
+      so treat a note here the way you would anything else typed into someone else's website.</p>
     <p>Signing out clears the copy held on the device you were using, so a shared computer is not left
       showing your list to the next person.</p>
     ` : `<p>Accounts are not switched on for this site, so there is no server and nothing is stored
