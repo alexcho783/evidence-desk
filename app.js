@@ -401,24 +401,25 @@ function clearRecent(){
 
 function classify(r){
   const types = new Set(((r.pubTypeList && r.pubTypeList.pubType) || []).map(t => String(t).toLowerCase()));
-  const has = (...xs) => xs.some(x => types.has(x));
+  let why = "";
+  const has = (...xs) => { const hit = xs.find(x => types.has(x)); if (hit) why = hit; return !!hit; };
   const txt = ((r.title || "") + " " + (r.abstractText || "")).toLowerCase();
   const ttl = String(r.title || "").toLowerCase();
-  const re = x => x.test(txt);
+  const re = x => { const m = x.exec(txt); if (m) why = m[0].trim(); return !!m; };
 
-  if (has("meta-analysis"))      return {design:"Meta-analysis",   tier:"synthesis", src:"metadata"};
-  if (has("systematic review"))  return {design:"Systematic review", tier:"synthesis", src:"metadata"};
+  if (has("meta-analysis"))      return {design:"Meta-analysis",   tier:"synthesis", src:"metadata", because: why};
+  if (has("systematic review"))  return {design:"Systematic review", tier:"synthesis", src:"metadata", because: why};
   if (has("practice guideline","guideline","consensus development conference"))
-                                 return {design:"Guideline",       tier:"guideline", src:"metadata"};
-  if (has("consensus statement")) return {design:"Consensus statement", tier:"guideline", src:"metadata"};
+                                 return {design:"Guideline",       tier:"guideline", src:"metadata", because: why};
+  if (has("consensus statement")) return {design:"Consensus statement", tier:"guideline", src:"metadata", because: why};
   if (has("randomized controlled trial"))
-                                 return {design:"Randomised controlled trial", tier:"trial", src:"metadata"};
+                                 return {design:"Randomised controlled trial", tier:"trial", src:"metadata", because: why};
   for (const t of types) {
     if (t.startsWith("clinical trial") || t === "pragmatic clinical trial" || t === "controlled clinical trial")
-      return {design:"Clinical trial", tier:"trial", src:"metadata"};
+      return {design:"Clinical trial", tier:"trial", src:"metadata", because: why};
   }
-  if (has("case reports"))       return {design:"Case report",     tier:"case", src:"metadata"};
-  if (has("observational study")) return {design:"Observational study", tier:"cohort", src:"metadata"};
+  if (has("case reports"))       return {design:"Case report",     tier:"case", src:"metadata", because: why};
+  if (has("observational study")) return {design:"Observational study", tier:"cohort", src:"metadata", because: why};
   /* One deliberate exception to "metadata always wins": Europe PMC's Review type is a
      coarse supertype that covers systematic reviews and narrative ones alike, and it does
      not apply Systematic Review to most of them. So a specific synthesis phrase upgrades a
@@ -430,20 +431,23 @@ function classify(r){
     || re(/\b(conducted|performed|undertook|report)\b[^.]{0,40}(systematic review|meta-analys|meta analys)/)
     || re(/\bprisma\b/);
   if (synthTitle || synthBody) {
+    if (synthTitle) why = (ttl.match(/systematic review|meta-analys\w*|network meta\w*|umbrella review/) || [""])[0];
     /* The title decides when it says anything; only a body-triggered match falls back
        to the body, or a plain systematic review is called a meta-analysis. */
     const isMeta = /meta-analys|meta analys|network meta/.test(ttl)
       || (!synthTitle && re(/\bmeta-analys/));
-    return {design: isMeta ? "Meta-analysis" : "Systematic review", tier:"synthesis", src:"inferred"};
+    return {design: isMeta ? "Meta-analysis" : "Systematic review", tier:"synthesis", src:"inferred", because: why};
   }
-  if (/scoping review|narrative review|literature review/.test(ttl))
-    return {design:"Review", tier:"narrative", src:"inferred"};
+  if (/scoping review|narrative review|literature review/.test(ttl)) {
+    why = (ttl.match(/scoping review|narrative review|literature review/) || [""])[0];
+    return {design:"Review", tier:"narrative", src:"inferred", because: why};
+  }
 
   /* Every indexed type is checked before any keyword guess. A record Europe PMC types as a
      review must never come back as a trial because its abstract mentions randomisation. */
-  if (has("review","review-article")) return {design:"Review", tier:"narrative", src:"metadata"};
+  if (has("review","review-article")) return {design:"Review", tier:"narrative", src:"metadata", because: why};
   if (has("editorial","comment","letter","news","published erratum"))
-                                 return {design:"Comment", tier:"narrative", src:"metadata"};
+                                 return {design:"Comment", tier:"narrative", src:"metadata", because: why};
 
   /* No design in the metadata — read the abstract instead. */
   /* "randomised" on its own appears in any paper that discusses trials, and "participants
@@ -452,27 +456,27 @@ function classify(r){
   /* Text that talks about trials without being one. */
   const aboutTrials = re(/target trial emulation|propensity[- ]score|retrospective|real-world|compared with randomi[sz]ed trials|pooled analysis of/);
   const animal = re(/\bmice\b|\bmouse\b|murine|\brats?\b|in vitro|cell lines?|ipsc|non-human primate|macaca|zebrafish|knockout|transgenic|preclinical|organoid/);
-  if (animal && !humanTrial) return {design: re(/in vitro|cell lines?|ipsc|organoid/) ? "In vitro" : "Animal study", tier:"preclinical", src:"inferred"};
-  if (humanTrial && !aboutTrials) return {design:"Trial",       tier:"trial",  src:"inferred"};
+  if (animal && !humanTrial) return {design: re(/in vitro|cell lines?|ipsc|organoid/) ? "In vitro" : "Animal study", tier:"preclinical", src:"inferred", because: why};
+  if (humanTrial && !aboutTrials) return {design:"Trial",       tier:"trial",  src:"inferred", because: why};
   if (re(/\bcohort\b|prospectively followed|longitudinal|years of follow-up/))
-                             return {design:"Cohort study",     tier:"cohort", src:"inferred"};
+                             return {design:"Cohort study",     tier:"cohort", src:"inferred", because: why};
   if (re(/case-control|case–control/))
-                             return {design:"Case–control",     tier:"cohort", src:"inferred"};
+                             return {design:"Case–control",     tier:"cohort", src:"inferred", because: why};
   if (re(/cross-sectional|prevalence survey|registry analysis|questionnaire survey/))
-                             return {design:"Cross-sectional",  tier:"cohort", src:"inferred"};
+                             return {design:"Cross-sectional",  tier:"cohort", src:"inferred", because: why};
   if (re(/consecutive (series|patients|children)|case series|we (describe|report) \d+ (patients|children|cases)/))
-                             return {design:"Case series",      tier:"case",   src:"inferred"};
+                             return {design:"Case series",      tier:"case",   src:"inferred", because: why};
   if (re(/we report a case|index patient|we present a (patient|case)/))
-                             return {design:"Case report",      tier:"case",   src:"inferred"};
+                             return {design:"Case report",      tier:"case",   src:"inferred", because: why};
   if (re(/simulation|mathematical model|computational model|in silico/))
-                             return {design:"Modelling",        tier:"preclinical", src:"inferred"};
+                             return {design:"Modelling",        tier:"preclinical", src:"inferred", because: why};
   if (re(/this review|we review|this article reviews|overview of/))
-                             return {design:"Review",           tier:"narrative", src:"inferred"};
+                             return {design:"Review",           tier:"narrative", src:"inferred", because: why};
   /* Commentaries are short and refer to another paper rather than reporting anything. */
   if ((r.abstractText || "").length < 1200
       && re(/in a recent issue|in this issue|this commentary|this perspective|accompanying (article|paper|trial)/))
-                             return {design:"Commentary",       tier:"narrative", src:"inferred"};
-  return {design:"Design unclear", tier:"narrative", src:"inferred"};
+                             return {design:"Commentary",       tier:"narrative", src:"inferred", because: why};
+  return {design:"Design unclear", tier:"narrative", src:"inferred", because: ""};
 }
 
 function findN(r){
@@ -743,7 +747,7 @@ function normalise(r){
     citations: typeof r.citedByCount === "number" ? r.citedByCount : null,
     openAccess: r.isOpenAccess === "Y",
     abstract: absText,
-    design: c.design, tier: c.tier, designSrc: c.src,
+    design: c.design, tier: c.tier, designSrc: c.src, designWhy: c.because || "",
     n: findN(r),
     url: r.doi ? "https://doi.org/" + r.doi
        : r.pmid ? "https://pubmed.ncbi.nlm.nih.gov/" + r.pmid + "/"
@@ -1350,7 +1354,12 @@ function renderSheet(){
 
   const kv = [];
   if (p.journal) kv.push(`<dt>Journal</dt><dd>${esc(p.journal)}${p.year ? `, <span class="num">${p.year}</span>` : ""}</dd>`);
-  kv.push(`<dt>Design</dt><dd>${esc(p.design)} <span style="color:var(--faint);font-size:12px">(${p.designSrc === "metadata" ? "from the record's publication type" : "inferred from the abstract"})</span></dd>`);
+  const whyNote = p.designSrc === "metadata"
+    ? `from the publication type${p.designWhy ? ` <i>${esc(p.designWhy)}</i>` : ""}`
+    : p.designSrc === "registry" ? "from the registry"
+    : p.designWhy ? `inferred from the phrase <i>${esc(p.designWhy)}</i>`
+    : "no design signal found in the title or abstract";
+  kv.push(`<dt>Design</dt><dd>${esc(p.design)} <span style="color:var(--faint);font-size:12px">${whyNote}</span></dd>`);
   if (p.n) kv.push(`<dt>Sample</dt><dd class="mono">n = ${p.n.toLocaleString()}</dd>`);
   if (p.citations != null) kv.push(`<dt>Cited</dt><dd class="mono">${p.citations.toLocaleString()} times</dd>`);
   if (p.doi) kv.push(`<dt>DOI</dt><dd class="mono"><a href="https://doi.org/${esc(p.doi)}" target="_blank" rel="noopener">${esc(p.doi)}</a></dd>`);
