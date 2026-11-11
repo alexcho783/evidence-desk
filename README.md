@@ -135,6 +135,43 @@ It also does not score quality within a tier, does not know whether a paper supp
 contradicts the question, and is not a systematic-review tool. The in-app **How it ranks** page
 states all of this to visitors.
 
+## Collections and references
+
+A saved paper can belong to any number of named collections, and a collection exports as a
+formatted bibliography. These are deliberately one feature rather than two: a named set of
+papers *is* the reference list for a piece of work, so "collections" and "citation projects"
+would have been the same thing built twice.
+
+Membership lives on the paper (`collections: []`), so it rides the existing sync and needs no
+table of its own. The cost of that choice: renaming touches every member, and an empty
+collection exists only in `localStorage` (`ed-collections`), so a collection you created but
+never filled does not follow you to another device.
+
+`cite.js` holds the formatting and export, independent of the rest of the app:
+
+| Style | Order | Notes |
+| --- | --- | --- |
+| Vancouver | As saved, numbered | ISO journal abbreviation; six authors then *et al.* |
+| APA 7th | Alphabetical | Full journal name, italic; hanging indent |
+| Harvard | Alphabetical | Three authors then *et al.*; hanging indent |
+
+A reference is built as runs — `{t: text, i: italic}` — not a string, because every style
+italicises something and Word would lose it otherwise.
+
+**Known limits, stated in the export footer too.** Titles keep the case the source gave them,
+so APA's sentence-case rule is not applied; journal names are title-cased heuristically.
+OpenAlex supplies one display name per author, so the surname is taken as the last word —
+wrong for some compound surnames. Trials are formatted as registry entries rather than
+articles. Check references before submitting.
+
+### Word export
+
+`docx@9.13.0` is loaded only on the first export, never on page load. Its bundle is `.cjs`,
+which **jsDelivr serves as `application/node` with `nosniff`** — a script tag refuses to run
+that. unpkg serves the same bytes as `text/javascript`, so it is primary, with a fetch of the
+jsDelivr copy re-injected through a blob URL as fallback. Output is a real `.docx` (verified by
+the `PK` zip signature), about 10 KB, built in under half a second.
+
 ## Storage
 
 Two kinds of state, with deliberately different lifetimes:

@@ -106,7 +106,7 @@ const EXAMPLES = [
   {tag:"Public",  q:"intensive blood pressure lowering dementia risk"}
 ];
 
-const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme"};
+const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections"};
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -114,7 +114,8 @@ const S = {
   view:"search",
   q:"", lastQ:"",
   source:"med",
-  plotOpen:false,   /* mobile only: the full grid is collapsed until asked for */
+  plotOpen:false,
+  coll:"all", citeStyle:"vancouver", exporting:false, renaming:false, confirmColl:false,   /* mobile only: the full grid is collapsed until asked for */
   design:"any", sort:"relevance", openOnly:false, yearFrom:"", yearTo:"",
   busy:false, loadingMore:false,
   results:[], hitCount:0, cursor:"*", exhausted:false,
@@ -130,6 +131,7 @@ const S = {
 /* ══ Helpers ═══════════════════════════════════════════ */
 
 const $ = id => document.getElementById(id);
+const EDCITE = () => window.EDCite || {STYLES:[], toDocxBlob:null};
 const esc = s => String(s == null ? "" : s)
   .replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const svg = id => `<svg aria-hidden="true"><use href="#${id}"/></svg>`;
@@ -207,6 +209,62 @@ function loadList(){
   S.recent = sessionStore(LS.recent) || [];
 }
 function saveList(){ store(LS.list, [...S.list.values()]); }
+
+/* Collections live on the papers themselves, so they sync with the reading list and need
+   no table of their own. An extra list of names is kept locally so a collection you have
+   just made, and not yet filled, does not vanish on the next render. */
+function collNames(){
+  const fromPapers = new Set();
+  for (const p of S.list.values()) for (const c of (p.collections || [])) fromPapers.add(c);
+  for (const c of (store(LS.colls) || [])) fromPapers.add(c);
+  return [...fromPapers].sort((a, b) => a.localeCompare(b));
+}
+function rememberColl(name){
+  const names = new Set(store(LS.colls) || []);
+  names.add(name);
+  store(LS.colls, [...names]);
+}
+function forgetColl(name){
+  store(LS.colls, (store(LS.colls) || []).filter(c => c !== name));
+}
+function setCollections(id, list){
+  const cur = S.list.get(id);
+  if (!cur) return;
+  cur.collections = list;
+  persist({type:"upsert", item:cur});
+}
+/* Renaming touches every member, since membership is stored on the paper. */
+function renameColl(from, to){
+  to = clean(to);
+  if (!to || to === from) return;
+  const touched = [];
+  for (const p of S.list.values()) {
+    if ((p.collections || []).includes(from)) {
+      p.collections = [...new Set(p.collections.map(c => c === from ? to : c))];
+      touched.push(p);
+    }
+  }
+  forgetColl(from); rememberColl(to);
+  if (S.coll === from) S.coll = to;
+  if (touched.length) persist({type:"bulk", items:touched});
+  else saveList();
+  render();
+}
+function deleteColl(name){
+  const touched = [];
+  for (const p of S.list.values()) {
+    if ((p.collections || []).includes(name)) {
+      p.collections = p.collections.filter(c => c !== name);
+      touched.push(p);
+    }
+  }
+  forgetColl(name);
+  if (S.coll === name) S.coll = "all";
+  if (touched.length) persist({type:"bulk", items:touched});
+  else saveList();
+  render();
+}
+const clean = v => String(v == null ? "" : v).trim().replace(/\s+/g, " ").slice(0, 60);
 
 /* The in-memory list is what the page renders. localStorage is a mirror, so the list is
    there instantly on load and keeps working offline. When someone is signed in the same
@@ -459,7 +517,19 @@ function normalisePsy(w){
     url: doi ? "https://doi.org/" + doi : (w.id || ""),
     epmc: w.id || "",
     fullText: ((w.best_oa_location || {}).landing_page_url) || "",
-    source: "psy"
+    source: "psy",
+    journalAbbrev: "",
+    volume: ((w.biblio || {}).volume) || "",
+    issue: ((w.biblio || {}).issue) || "",
+    pages: [(w.biblio || {}).first_page, (w.biblio || {}).last_page].filter(Boolean).join("-"),
+    /* OpenAlex gives one display name, so the surname is taken as the last word and the
+       rest become initials. Wrong for a few compound surnames; flagged in the export. */
+    authorList: (w.authorships || []).map(a => {
+      const nm = ((a.author || {}).display_name || "").trim().split(/\s+/);
+      if (!nm.length || !nm[0]) return null;
+      const last = nm.pop();
+      return { last, first: nm.join(" "), initials: nm.map(x => x[0]).join("") };
+    }).filter(Boolean)
   };
 }
 
@@ -608,7 +678,17 @@ function normalise(r){
        : "https://europepmc.org/article/" + (r.source || "MED") + "/" + (r.id || ""),
     epmc: "https://europepmc.org/article/" + (r.source || "MED") + "/" + (r.id || ""),
     fullText: ft.length ? ft[0].url : "",
-    source: "med"
+    source: "med",
+    /* Needed to build a real reference, not just to display a card. */
+    journalAbbrev: dec((r.journalInfo && r.journalInfo.journal && r.journalInfo.journal.isoabbreviation) || ""),
+    volume: (r.journalInfo && r.journalInfo.volume) || "",
+    issue: (r.journalInfo && r.journalInfo.issue) || "",
+    pages: r.pageInfo || "",
+    authorList: (((r.authorList || {}).author) || []).map(a => ({
+      last: dec(a.lastName || ""),
+      first: dec(a.firstName || ""),
+      initials: a.initials || ""
+    })).filter(a => a.last)
   };
 }
 
@@ -938,6 +1018,7 @@ function renderSearch(){
 
 function listRows(){
   let rows = [...S.list.values()];
+  if (S.coll !== "all") rows = rows.filter(p => (p.collections || []).includes(S.coll));
   if (S.filter) {
     const t = S.filter.toLowerCase();
     rows = rows.filter(p =>
@@ -990,6 +1071,33 @@ function renderList(){
       : "Kept in this browser. Export them before you switch computer."}</p>
     ${syncBanner()}
     <div class="filters" style="padding-bottom:16px;border-bottom:1px solid var(--line-soft);margin-top:16px">
+      <label class="sr" for="f-coll">Collection</label>
+      <select class="sel" id="f-coll">
+        <option value="all"${S.coll === "all" ? " selected" : ""}>All papers (${all.length})</option>
+        ${collNames().map(c => {
+          const n = all.filter(p => (p.collections || []).includes(c)).length;
+          return `<option value="${esc(c)}"${S.coll === c ? " selected" : ""}>${esc(c)} (${n})</option>`;
+        }).join("")}
+      </select>
+      ${S.coll === "all" ? "" : S.renaming
+        ? `<form id="rename-form" style="display:flex;gap:6px">
+             <label class="sr" for="rename-in">New name</label>
+             <input class="sel" id="rename-in" style="width:150px" value="${esc(S.coll)}" maxlength="60">
+             <button class="btn btn-sm btn-primary" type="submit">Save</button>
+             <button class="btn btn-sm btn-quiet" id="rename-cancel" type="button">Cancel</button>
+           </form>`
+        : S.confirmColl
+          ? `<span class="confirm" style="width:auto">${svg("i-alert")}<span>Delete the collection "${esc(S.coll)}"? The papers stay.</span>
+               <button class="btn btn-sm btn-quiet" id="coll-del-no" type="button">Keep</button>
+               <button class="btn btn-sm btn-danger" id="coll-del-yes" type="button">Delete</button></span>`
+          : `<button class="btn btn-sm btn-quiet" id="coll-rename" type="button">Rename</button>
+             <button class="btn btn-sm btn-quiet" id="coll-delete" type="button">Delete</button>`}
+      <label class="sr" for="f-style">Reference style</label>
+      <select class="sel" id="f-style">
+        ${EDCITE().STYLES.map(st => `<option value="${st.k}"${S.citeStyle === st.k ? " selected" : ""}>${st.label}</option>`).join("")}
+      </select>
+      <button class="btn btn-sm btn-primary" id="export-docx" type="button" ${S.exporting ? "disabled" : ""}>
+        ${svg("i-down")}${S.exporting ? "Building…" : "Export Word"}</button>
       <button class="btn btn-sm" data-export="bib">${svg("i-down")}BibTeX</button>
       <button class="btn btn-sm" data-export="ris">${svg("i-down")}RIS</button>
       <span style="flex:1"></span>
@@ -1111,6 +1219,17 @@ function renderSheet(){
       ${p.authors ? `<p class="sheet-authors">${esc(p.authors)}</p>` : ""}
       <dl class="kv">${kv.join("")}</dl>
       ${saved ? `
+        <div class="sh-head">Collections</div>
+        <div class="chips">${(p.collections || []).length
+          ? (p.collections || []).map(c => `<button class="tag-del" type="button" data-uncoll="${esc(c)}">${esc(c)}${svg("i-x")}</button>`).join("")
+          : `<span style="font-size:13px;color:var(--faint)">Not in a collection yet</span>`}</div>
+        <form class="tagrow" id="coll-form">
+          <label class="sr" for="coll-in">Add to a collection</label>
+          <input id="coll-in" list="coll-list" placeholder="Add to a collection, e.g. EPQ essay" autocomplete="off" maxlength="60">
+          <datalist id="coll-list">${collNames().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>
+          <button class="btn btn-sm" type="submit">Add</button>
+        </form>
+
         <div class="sh-head">Your note</div>
         <textarea class="note" id="note" placeholder="What this paper shows, what you doubt, how it connects to the rest.">${esc(p.note || "")}</textarea>
         <div style="display:flex;gap:8px;align-items:center;margin-top:9px">
@@ -1333,6 +1452,33 @@ function home(){
 
 /* ══ Export ═══════════════════════════════════════════ */
 
+function downloadBlob(name, blob){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* The docx library is fetched on the first export and cached by the browser after that,
+   so the ~1.3 MB cost is paid once and never on a plain search. */
+async function exportDocx(){
+  const rows = listRows();
+  if (!rows.length) { toast("Nothing to export with these filters."); return; }
+  const cite = EDCITE();
+  if (typeof cite.toDocxBlob !== "function") { toast("Export isn't available in this build."); return; }
+  S.exporting = true; render();
+  try {
+    const name = S.coll === "all" ? "References" : S.coll;
+    const blob = await cite.toDocxBlob(name, rows, S.citeStyle);
+    downloadBlob(slug(name) + ".docx", blob);
+    toast(`${rows.length} reference${rows.length === 1 ? "" : "s"} exported.`);
+  } catch (e) {
+    toast("Couldn't build the Word file — the export library didn't load.");
+  }
+  S.exporting = false; render();
+}
+
 function download(name, text, mime){
   const blob = new Blob([text], {type: mime + ";charset=utf-8"});
   const url = URL.createObjectURL(blob);
@@ -1378,7 +1524,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes");
+  const t = ev.target.closest("[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
@@ -1392,6 +1538,18 @@ document.addEventListener("click", (ev) => {
   if (t.id === "wipe-no")  { S.account.confirmWipe = false; render(); return; }
   if (t.id === "wipe-yes") { deleteAccount(); return; }
   if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
+  if (t.dataset.uncoll && S.open) {
+    const cur = S.list.get(S.open.id);
+    if (cur) { setCollections(S.open.id, (cur.collections || []).filter(c => c !== t.dataset.uncoll));
+               S.open = {...S.list.get(S.open.id)}; renderSheet(); }
+    return;
+  }
+  if (t.id === "coll-rename")  { S.renaming = true;  S.confirmColl = false; render(); return; }
+  if (t.id === "rename-cancel"){ S.renaming = false; render(); return; }
+  if (t.id === "coll-delete")  { S.confirmColl = true; S.renaming = false; render(); return; }
+  if (t.id === "coll-del-no")  { S.confirmColl = false; render(); return; }
+  if (t.id === "coll-del-yes") { deleteColl(S.coll); S.confirmColl = false; return; }
+  if (t.id === "export-docx")  { exportDocx(); return; }
   if (t.dataset.src) {
     if (S.source === t.dataset.src) return;
     S.source = t.dataset.src;
@@ -1489,6 +1647,27 @@ document.addEventListener("click", (ev) => {
 });
 
 document.addEventListener("submit", (ev) => {
+  if (ev.target.id === "coll-form") {
+    ev.preventDefault();
+    const el = document.querySelector("#coll-in");
+    const v = clean(el && el.value);
+    if (!v || !S.open) return;
+    const cur = S.list.get(S.open.id);
+    if (!cur) return;
+    rememberColl(v);
+    setCollections(S.open.id, [...new Set([...(cur.collections || []), v])]);
+    S.open = {...S.list.get(S.open.id)};
+    renderSheet();
+    return;
+  }
+  if (ev.target.id === "rename-form") {
+    ev.preventDefault();
+    const el = document.querySelector("#rename-in");
+    renameColl(S.coll, el ? el.value : "");
+    S.renaming = false;
+    render();
+    return;
+  }
   if (ev.target.id === "email-form") {
     ev.preventDefault();
     const el = document.querySelector("#email-in");
@@ -1515,6 +1694,8 @@ document.addEventListener("input", (ev) => {
 });
 
 document.addEventListener("change", (ev) => {
+  if (ev.target.id === "f-coll")  { S.coll = ev.target.value; S.renaming = false; S.confirmColl = false; render(); return; }
+  if (ev.target.id === "f-style") { S.citeStyle = ev.target.value; render(); return; }
   const el = ev.target;
   if (el.id === "f-design") { S.design = el.value; if (S.lastQ) runSearch(S.lastQ); }
   if (el.id === "f-sort")   { S.sort = el.value;   if (S.lastQ) runSearch(S.lastQ); }
