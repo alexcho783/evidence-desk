@@ -41,19 +41,19 @@ const SOURCES = {
     label:"Medicine", short:"Med", db:"Europe PMC",
     ladder:["synthesis","guideline","trial","cohort","case","preclinical","narrative"],
     overrides:{},
-    placeholder:"SGLT2 inhibitors heart failure mortality"
+    placeholder:"Ask a clinical question, or paste a DOI or PMID"
   },
   psy: {
     label:"Psychology", short:"Psy", db:"OpenAlex",
     ladder:["synthesis","trial","experiment","cohort","survey","qualitative","case","narrative"],
     overrides:{ cohort:{label:"Longitudinal", note:"Prospective · follow-up", noun:["longitudinal study","longitudinal studies"]} },
-    placeholder:"working memory training transfer effects"
+    placeholder:"Ask a psychology question, or paste a DOI"
   },
   trials: {
     label:"Trials", short:"Trials", db:"ClinicalTrials.gov",
     ladder:["phase3","phase4","obsreg","phase2","phase1","nophase"],
     overrides:{},
-    placeholder:"empagliflozin heart failure"
+    placeholder:"Search trials by condition or drug"
   }
 };
 
@@ -117,6 +117,7 @@ const S = {
   plotOpen:false,   /* mobile only: the full grid is collapsed until asked for */
   coll:"all", citeStyle:"vancouver", exporting:false, renaming:false, confirmColl:false,
   chainLabel:"",    /* set while showing the papers that cite a given paper */
+  hint:"",          /* shown when Search is pressed with nothing typed */
   design:"any", sort:"relevance", openOnly:false, yearFrom:"", yearTo:"",
   busy:false, loadingMore:false,
   results:[], hitCount:0, cursor:"*", exhausted:false,
@@ -1123,6 +1124,10 @@ function renderSearch(){
     </div>
   </form>`;
 
+  const hint = S.hint
+    ? `<div class="notice" role="status">${svg("i-alert")}<div>${esc(S.hint)}</div></div>`
+    : "";
+
   const working = S.busy ? `<div class="working" role="status" aria-live="polite">
     <span class="spin" aria-hidden="true"></span>
     <div><div class="working-t">Searching Europe PMC</div>
@@ -1169,7 +1174,7 @@ function renderSearch(){
       <p>Europe PMC found no records. Try fewer words, drop the filters, or name the population, the intervention and the outcome separately.</p></div>`;
   }
 
-  $("view-search").innerHTML = hero + working + err + examples + results;
+  $("view-search").innerHTML = hero + hint + working + err + examples + results;
 }
 
 /* ══ Reading list view ═══════════════════════════════════════════ */
@@ -1987,13 +1992,21 @@ document.addEventListener("submit", (ev) => {
   if (ev.target.id === "search-form") {
     ev.preventDefault();
     const el = $("q");
-    runSearch(el ? el.value : S.q);
+    const typed = ((el && el.value) || "").trim();
+    if (!typed) {
+      S.hint = "Type a question first, or paste a DOI or PMID. The examples below are a starting point.";
+      render();
+      if ($("q")) $("q").focus();
+      return;
+    }
+    S.hint = "";
+    runSearch(typed);
   }
 });
 
 document.addEventListener("input", (ev) => {
   const el = ev.target;
-  if (el.id === "q") S.q = el.value;
+  if (el.id === "q") { S.q = el.value; if (S.hint && el.value.trim()) { S.hint = ""; render(); } }
   if (el.id === "f-from") S.yearFrom = el.value.replace(/\D/g, "").slice(0, 4);
   if (el.id === "f-to")   S.yearTo   = el.value.replace(/\D/g, "").slice(0, 4);
   if (el.id === "q-list") {
