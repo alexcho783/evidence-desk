@@ -1074,6 +1074,7 @@ function plot(rows){
       <span class="lg" data-w="weak"><i></i>Weak or indirect</span>
       <span class="lg" data-w="saved"><i></i>Saved</span>
       <span style="color:var(--faint)">Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper.</span>
+      <span style="flex-basis:100%;color:var(--faint)">This grid shows only the ${S.results.length} papers listed below, which are the first results by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}. That ordering favours recent work, so the grid is not a picture of the whole literature.</span>
     </div>
     </div>
   </section>`;
