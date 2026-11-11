@@ -27,6 +27,12 @@ const TIER = {
   qualitative: {label:"Qualitative",   note:"Interview · thematic analysis",     w:"weak",   rank:6, noun:["qualitative study","qualitative studies"]},
   case:        {label:"Case",          note:"Case report · series",              w:"weak",   rank:7, noun:["case report","case reports"]},
   preclinical: {label:"Preclinical",   note:"Animal · in vitro · modelling",     w:"weak",   rank:8, noun:["preclinical study","preclinical studies"]},
+  phase3:      {label:"Phase 3",       note:"Pivotal efficacy",                  w:"strong", rank:2.1, noun:["phase 3 trial","phase 3 trials"]},
+  phase4:      {label:"Phase 4",       note:"Post-marketing",                    w:"strong", rank:2.2, noun:["phase 4 trial","phase 4 trials"]},
+  obsreg:      {label:"Observational", note:"Registry · cohort",                 w:"mid",    rank:3.1, noun:["observational study","observational studies"]},
+  phase2:      {label:"Phase 2",       note:"Efficacy · dose-finding",           w:"mid",    rank:4.1, noun:["phase 2 trial","phase 2 trials"]},
+  phase1:      {label:"Phase 1",       note:"Safety · dosing",                   w:"weak",   rank:7.1, noun:["phase 1 trial","phase 1 trials"]},
+  nophase:     {label:"Unphased",      note:"Device · behavioural · other",      w:"weak",   rank:8.1, noun:["unphased study","unphased studies"]},
   narrative:   {label:"Narrative",     note:"Review · comment · editorial",      w:"weak",   rank:9, noun:["review","reviews"]}
 };
 
@@ -42,6 +48,12 @@ const SOURCES = {
     ladder:["synthesis","trial","experiment","cohort","survey","qualitative","case","narrative"],
     overrides:{ cohort:{label:"Longitudinal", note:"Prospective · follow-up", noun:["longitudinal study","longitudinal studies"]} },
     placeholder:"working memory training transfer effects"
+  },
+  trials: {
+    label:"Trials", short:"Trials", db:"ClinicalTrials.gov",
+    ladder:["phase3","phase4","obsreg","phase2","phase1","nophase"],
+    overrides:{},
+    placeholder:"empagliflozin heart failure"
   }
 };
 
@@ -56,11 +68,22 @@ function tierMeta(k){
   return { ...(TIER[k] || TIER.narrative), ...((s.overrides || {})[k] || {}) };
 }
 
-const ERAS = [
-  {k:"old", label:"Before " + (Y-14), sub:"Older work",      test:y => y <  Y-14},
-  {k:"mid", label:(Y-14) + "–" + (Y-5), sub:"Established",   test:y => y >= Y-14 && y <= Y-5},
-  {k:"new", label:(Y-4) + "–now",     sub:"Current",         test:y => y >= Y-4}
+const ERA_COLS = [
+  {k:"old", label:"Before " + (Y-14), sub:"Older work",    test:p => !!p.year && p.year <  Y-14},
+  {k:"mid", label:(Y-14) + "–" + (Y-5), sub:"Established", test:p => !!p.year && p.year >= Y-14 && p.year <= Y-5},
+  {k:"new", label:(Y-4) + "–now",     sub:"Current",       test:p => !!p.year && p.year >= Y-4}
 ];
+
+
+/* For registered trials the informative axis is not when they ran but whether they ever
+   reported. A completed trial with no results posted is the publication-bias signal that
+   no database of published papers can show you. */
+const TRIAL_COLS = [
+  {k:"reported", label:"Reported",   sub:"Results posted",       test:p => p.trialResults === true},
+  {k:"silent",   label:"Unreported", sub:"Finished, no results", test:p => p.trialResults === false && p.trialDone === true},
+  {k:"ongoing",  label:"Ongoing",    sub:"Still running",        test:p => p.trialDone === false}
+];
+const cols = () => (S.source === "trials" ? TRIAL_COLS : ERA_COLS);
 
 const DESIGN_FILTERS = [
   {k:"any",    label:"Any design",            q:""},
@@ -469,6 +492,83 @@ async function fetchOpenAlex(cursor){
   };
 }
 
+/* ══ ClinicalTrials.gov (registered trials) ═══════════════════════════════════════════
+ * Not papers. These are trials as registered, which is the one thing a database of
+ * published literature cannot show: studies that finished and never reported. The tiers
+ * are phases rather than study designs, and the columns are reporting status rather than
+ * era, because "did this ever report?" is the question worth asking of a registry. */
+
+const CTGOV = "https://clinicaltrials.gov/api/v2/studies";
+const TRIAL_DONE = ["COMPLETED","TERMINATED","WITHDRAWN","SUSPENDED","UNKNOWN"];
+
+function normaliseTrial(st){
+  const p = st.protocolSection || {};
+  const idm = p.identificationModule || {};
+  const sm = p.statusModule || {};
+  const dm = p.designModule || {};
+  const nct = idm.nctId || "";
+  const phases = dm.phases || [];
+  const studyType = dm.studyType || "";
+  const status = sm.overallStatus || "";
+
+  let tier = "nophase", design = "Unphased";
+  if (studyType === "OBSERVATIONAL") { tier = "obsreg"; design = "Observational"; }
+  else if (phases.includes("PHASE4")) { tier = "phase4"; design = "Phase 4"; }
+  else if (phases.includes("PHASE3")) { tier = "phase3"; design = "Phase 3"; }
+  else if (phases.includes("PHASE2")) { tier = "phase2"; design = "Phase 2"; }
+  else if (phases.includes("PHASE1")) { tier = "phase1"; design = "Phase 1"; }
+
+  const dateOf = k => ((sm[k] || {}).date || "");
+  const year = parseInt((dateOf("primaryCompletionDateStruct") || dateOf("completionDateStruct")
+    || dateOf("startDateStruct")).slice(0, 4), 10) || null;
+
+  return {
+    id: "CT:" + nct,
+    title: idm.briefTitle || idm.officialTitle || "Untitled",
+    authors: ((p.sponsorCollaboratorsModule || {}).leadSponsor || {}).name || "",
+    journal: "", year,
+    doi: "", pmid: "",
+    citations: null,
+    openAccess: false,
+    abstract: (p.descriptionModule || {}).briefSummary || "",
+    design, tier,
+    designSrc: "registry",        /* from the registry itself, so never marked inferred */
+    n: typeof (dm.enrollmentInfo || {}).count === "number" ? dm.enrollmentInfo.count : null,
+    url: nct ? "https://clinicaltrials.gov/study/" + nct : "",
+    epmc: nct ? "https://clinicaltrials.gov/study/" + nct : "",
+    fullText: "",
+    source: "trials",
+    nct,
+    trialStatus: status ? status.replace(/_/g, " ").toLowerCase().replace(/^./, m => m.toUpperCase()) : "",
+    trialResults: !!st.hasResults,
+    trialDone: TRIAL_DONE.includes(status)
+  };
+}
+
+async function fetchTrials(cursor){
+  const p = new URLSearchParams();
+  p.set("query.term", S.q.trim());
+  p.set("pageSize", String(PAGE));
+  p.set("format", "json");
+  p.set("countTotal", "true");
+  if (S.sort === "recent") p.set("sort", "StartDate:desc");
+  if (cursor && cursor !== "*") p.set("pageToken", cursor);
+
+  let res;
+  try { res = await fetch(CTGOV + "?" + p.toString(), {headers:{Accept:"application/json"}}); }
+  catch (e) { throw {kind: navigator.onLine === false ? "offline" : "network"}; }
+  if (res.status === 400) throw {kind:"badquery"};
+  if (res.status === 429) throw {kind:"rate"};
+  if (!res.ok) throw {kind:"server", status:res.status};
+  let data;
+  try { data = await res.json(); } catch(e) { throw {kind:"parse"}; }
+  return {
+    rows: (data.studies || []).map(normaliseTrial),
+    hitCount: data.totalCount || 0,
+    next: data.nextPageToken || null
+  };
+}
+
 /* ══ Europe PMC ═══════════════════════════════════════════ */
 
 function buildQuery(){
@@ -513,7 +613,8 @@ function normalise(r){
 }
 
 async function fetchPage(cursor){
-  if (S.source === "psy") return fetchOpenAlex(cursor);
+  if (S.source === "psy")    return fetchOpenAlex(cursor);
+  if (S.source === "trials") return fetchTrials(cursor);
   const p = new URLSearchParams({
     query: buildQuery(),
     format: "json",
@@ -629,7 +730,14 @@ function readUrl(){
 
 function chips(p){
   const c = [`<span class="chip" data-k="tier">${esc(p.design)}${p.designSrc === "inferred" ? ` <span class="chip-inf">inferred</span>` : ""}</span>`];
-  if (p.n) c.push(`<span class="chip" data-k="n">n = ${p.n.toLocaleString()}</span>`);
+  if (p.source === "trials") {
+    c.push(`<span class="chip">${esc(p.trialStatus || "Status unknown")}</span>`);
+    /* The whole reason this source exists: a finished trial that never reported. */
+    if (p.trialDone) c.push(p.trialResults
+      ? `<span class="chip" data-k="posted">Results posted</span>`
+      : `<span class="chip" data-k="unposted">No results posted</span>`);
+  }
+  if (p.n) c.push(`<span class="chip" data-k="n">${p.source === "trials" ? "enrolled " : "n = "}${p.n.toLocaleString()}</span>`);
   if (p.openAccess) c.push(`<span class="chip" data-k="oa">Open access</span>`);
   for (const t of (p.tags || [])) c.push(`<span class="chip" data-k="tag">${esc(t)}</span>`);
   return `<div class="chips">${c.join("")}</div>`;
@@ -664,16 +772,19 @@ function card(p, idx){
 }
 
 function plot(rows){
-  const placed = rows.filter(p => p.year);
+  const columns = cols();
+  /* A row belongs on the grid if any column will take it — a missing year for the era
+     columns, a status none of the trial columns match. */
+  const placed = rows.filter(p => columns.some(c => c.test(p)));
   const ladder = tiers();
   const used = ladder.filter(t => placed.some(p => p.tier === t.k));
   const rows_t = used.length ? used : ladder.slice(0, 3);
 
-  const counts = ERAS.map(e => placed.filter(p => e.test(p.year)).length);
-  const cols = counts.map(c => c ? "minmax(0,1fr)" : "minmax(0,0.42fr)").join(" ");
+  const counts = columns.map(c => placed.filter(p => c.test(p)).length);
+  const colTracks = counts.map(c => c ? "minmax(0,1fr)" : "minmax(0,0.42fr)").join(" ");
 
   let g = `<div class="p-corner"></div>`;
-  ERAS.forEach((e, i) => {
+  columns.forEach((e, i) => {
     g += `<div class="p-colhead" data-empty="${counts[i] ? 0 : 1}">
             <b>${esc(e.label)}</b><span>${counts[i] ? esc(e.sub) : "none"}</span></div>`;
   });
@@ -681,11 +792,11 @@ function plot(rows){
   for (const t of rows_t) {
     g += `<div class="p-rowhead ${t.w === "strong" ? "p-row-strong" : "p-row-weak"}">
             <b>${t.label}</b><span>${t.note}</span></div>`;
-    for (const e of ERAS) {
-      const cell = placed.filter(p => p.tier === t.k && e.test(p.year));
+    for (const e of columns) {
+      const cell = placed.filter(p => p.tier === t.k && e.test(p));
       g += `<div class="p-cell">` + (cell.length
         ? cell.map(p => {
-            const lab = `${p.title.slice(0,70)} — ${p.design}, ${p.year}${p.n ? `, n = ${p.n}` : ""}`;
+            const lab = `${p.title.slice(0,70)} — ${p.design}${p.year ? `, ${p.year}` : ""}${p.n ? `, n = ${p.n}` : ""}${p.trialStatus ? `, ${p.trialStatus.toLowerCase()}` : ""}`;
             return `<button class="p-dot" data-w="${t.w}" data-saved="${S.list.has(p.id) ? 1 : 0}"
               data-jump="${esc(p.id)}" title="${esc(lab)}" aria-label="${esc(lab)}"><i></i></button>`;
           }).join("")
@@ -705,9 +816,9 @@ function plot(rows){
                 return `${n} ${n === 1 ? nm[0] : nm[1]}`; });
   const wCount = {strong:0, mid:0, weak:0};
   for (const p of placed) wCount[tierMeta(p.tier).w || "weak"]++;
-  const liveEras = ERAS.filter(e => placed.some(p => e.test(p.year)));
-  const eraNote = liveEras.length !== 1 ? ""
-    : ` \u00b7 ${liveEras[0].k === "new" ? `all since ${Y - 4}` : `all ${liveEras[0].label.toLowerCase()}`}`;
+  const live = columns.filter(c => placed.some(p => c.test(p)));
+  const eraNote = live.length !== 1 ? ""
+    : ` \u00b7 ${live[0].k === "new" ? `all since ${Y - 4}` : `all ${live[0].label.toLowerCase()}`}`;
   const summary = `<button class="plot-sum" type="button" data-plot-toggle aria-expanded="${S.plotOpen ? "true" : "false"}">
       <span class="sum-bar" aria-hidden="true">${["strong","mid","weak"]
         .map(w => wCount[w] ? `<i data-w="${w}" style="flex:${wCount[w]}"></i>` : "").join("")}</span>
@@ -722,7 +833,7 @@ function plot(rows){
       <span class="plot-title">What kind of evidence answers this</span>
       <span class="plot-note">${placed.length} of ${rows.length} shown${undated ? ` · ${undated} undated` : ""}</span>
     </div>
-    <div class="plot" style="--cols:${cols}" role="img" aria-label="Papers arranged by study design strength and publication era">${g}</div>
+    <div class="plot" style="--cols:${colTracks}" role="img" aria-label="${S.source === 'trials' ? 'Trials arranged by phase and reporting status' : 'Papers arranged by study design strength and publication era'}">${g}</div>
     <div class="plot-legend">
       <span class="lg" data-w="strong"><i></i>Strong design</span>
       <span class="lg" data-w="mid"><i></i>Observational</span>
@@ -764,7 +875,7 @@ function renderSearch(){
       </select>` : ""}
       <label class="sr" for="f-sort">Sort by</label>
       <select class="sel" id="f-sort">
-        ${SORTS.map(s => `<option value="${s.k}"${S.sort === s.k ? " selected" : ""}>${s.label}</option>`).join("")}
+        ${SORTS.filter(o => !(S.source === "trials" && o.k === "cited")).map(o => `<option value="${o.k}"${S.sort === o.k ? " selected" : ""}>${o.label}</option>`).join("")}
       </select>
       <label class="sr" for="f-from">Published from</label>
       <input class="sel" id="f-from" style="width:88px" inputmode="numeric" maxlength="4" placeholder="From" value="${esc(S.yearFrom)}">
@@ -913,8 +1024,16 @@ function renderAbout(){
     <h2>The columns</h2>
     <p>Papers are grouped by publication era, oldest on the left. This answers a question clinicians ask constantly and search engines rarely show: <i>is the good evidence here still current?</i> A topic whose only synthesis sits in the left column, with all the trials on the right, is a topic where the summary has not caught up with the primary literature.</p>
 
-    <h2>Two literatures, two ladders</h2>
-    <p>The switch under the search box changes both where the papers come from and how they are
+    <h2>Three sources, three ladders</h2>
+    <p><b>Trials</b> searches <a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>
+      and is not a literature search at all. It returns trials <i>as registered</i> — including ones
+      that finished years ago and never published a word. That is publication bias, the largest
+      distortion in any search of published papers, and it is invisible to every database that only
+      holds things which got published. The rows are phases rather than study designs, and the
+      columns ask the question worth asking of a registry: <b>did this ever report?</b> A topic whose
+      Unreported column is fuller than its Reported one is a topic where the published literature is
+      not the whole story.</p>
+    <p>The switch under the search box changes both where the records come from and how they are
       ranked. <b>Medicine</b> searches <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
       <b>Psychology</b> searches <a href="https://openalex.org" target="_blank" rel="noopener">OpenAlex</a>,
       restricted to its psychology field, because Europe PMC covers psychiatry but very little

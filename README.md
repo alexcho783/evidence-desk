@@ -47,17 +47,29 @@ publish directory to set.
 
 Nothing in the code assumes it is served from the root of a domain, so a subpath works fine.
 
-## Two sources
+## Three sources
 
-A switch under the search box picks the literature, and changes both the database and the
-ranking ladder.
+A switch under the search box picks what to search, and changes the database, the rows and the
+columns together.
 
-| | Medicine | Psychology |
-| --- | --- | --- |
-| Database | Europe PMC | OpenAlex, filtered to `primary_topic.field.id:fields/32` |
-| Study design from | MEDLINE publication types (human indexers) | Title and abstract only |
-| Marked `inferred` | Only untagged records | **Always** |
-| Extra tiers | Guideline, Preclinical | Experiment, Survey, Qualitative |
+| | Medicine | Psychology | Trials |
+| --- | --- | --- | --- |
+| Database | Europe PMC | OpenAlex, `primary_topic.field.id:fields/32` | ClinicalTrials.gov v2 |
+| Records are | Published papers | Published papers | Registered trials |
+| Rows | Study design | Study design | Trial phase |
+| Columns | Publication era | Publication era | **Reporting status** |
+| Design from | MEDLINE publication types | Title and abstract | The registry |
+| Marked `inferred` | Untagged records only | **Always** | Never |
+
+**Trials is not a literature search.** It returns trials as registered, including ones that
+finished and never published, which is publication bias made visible — the one thing no database
+of published papers can show. Its columns are Reported / Unreported / Ongoing rather than eras,
+because "did this ever report?" is the question worth asking of a registry.
+
+Columns are per-source (`ERA_COLS` and `TRIAL_COLS`, chosen by `cols()`), and every column test
+takes the whole record rather than a year, so the two axes are interchangeable. Tiers come from
+one shared `TIER` table with a numeric `rank`, so a reading list holding papers and trials still
+sorts.
 
 Europe PMC covers psychiatry but very little cognitive, social or developmental psychology,
 which is why the second source exists. The ladders differ because the fields do: a controlled

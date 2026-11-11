@@ -379,6 +379,8 @@ h1,h2,h3{text-wrap:balance; margin:0}
   background:var(--surface-2); color:var(--muted); border:1px solid transparent}
 .chip[data-k="tier"]{background:transparent; border-color:var(--line); color:var(--muted)}
 .chip[data-k="oa"]{background:var(--strong-soft); color:var(--strong)}
+.chip[data-k="posted"]{background:var(--strong-soft); color:var(--strong)}
+.chip[data-k="unposted"]{background:var(--weak-soft); color:var(--weak)}
 .chip[data-k="n"]{font-family:var(--f-data); font-weight:500}
 .chip[data-k="tag"]{background:var(--accent-soft); color:var(--accent-ink)}
 .chip-inf{opacity:.75; font-weight:500; font-style:italic}
