@@ -165,27 +165,6 @@ window.EDAuth = {
     if (error) throw new Error(friendly(error));
   },
 
-  /* Asks the appraise Edge Function what the retrieved papers say about the question.
-     Signed-in only, because the function spends a quota that someone has to own. */
-  async appraise(question, papers){
-    requireSession();
-    const { data, error } = await client.functions.invoke("appraise", {
-      body: { question, papers }
-    });
-    if (error) {
-      let msg = "The appraisal service couldn't be reached.";
-      try {
-        const body = await error.context.json();
-        if (body && body.message) msg = body.message;
-      } catch(e){}
-      throw new Error(msg);
-    }
-    if (!data || typeof data.verdict !== "string") {
-      throw new Error("The appraisal came back in an unusable shape.");
-    }
-    return data;
-  },
-
   /* Removes the saved papers and the account itself. Runs as a database function so it
      works with the public key without exposing anything that could delete someone else. */
   async deleteAccount(){

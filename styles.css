@@ -114,47 +114,6 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .banner .spin{flex:0 0 15px; width:15px; height:15px}
 .banner b{color:var(--ink); font-weight:600}
 .sync-dot{width:7px; height:7px; border-radius:50%; background:var(--strong); flex:0 0 7px}
-
-/* ── Appraisal ───────────────────────────────
-   Stance is shown by shape as well as colour: a filled disc supports, a hollow disc is
-   mixed, a triangle points against. Colour alone would fail for a colour-blind reader. */
-.verdict{margin-top:20px; padding:20px 22px; background:var(--surface);
-  border:1px solid var(--line-soft); border-radius:var(--r-l); box-shadow:var(--shadow)}
-.verdict-top{display:flex; flex-wrap:wrap; align-items:center; gap:9px; margin-bottom:12px}
-.vt-lab{display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600;
-  letter-spacing:.06em; text-transform:uppercase; color:var(--accent-ink);
-  background:var(--accent-soft); border-radius:999px; padding:4px 10px}
-.vt-lab svg{width:12px; height:12px}
-.certainty{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
-  border-radius:999px; padding:4px 10px; border:1px solid var(--line);
-  color:var(--muted); text-transform:capitalize}
-.certainty[data-c="high"]{color:var(--strong); background:var(--strong-soft);
-  border-color:color-mix(in srgb, var(--strong) 40%, var(--line))}
-.certainty[data-c="moderate"]{color:var(--mid); background:var(--mid-soft);
-  border-color:color-mix(in srgb, var(--mid) 40%, var(--line))}
-.certainty[data-c="low"]{color:var(--weak); background:var(--weak-soft);
-  border-color:color-mix(in srgb, var(--weak) 40%, var(--line))}
-.verdict-text{font-family:var(--f-read); font-size:19px; line-height:1.48; letter-spacing:-.005em}
-.verdict-foot{display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:16px;
-  padding-top:14px; border-top:1px solid var(--line-soft); font-size:12px; color:var(--faint)}
-.verdict-foot .grow{flex:1; min-width:200px}
-
-.p-dot[data-s="supports"] i{background:var(--strong); border-color:transparent}
-.p-dot[data-s="mixed"] i{background:transparent; border-color:var(--mid)}
-.p-dot[data-s="against"] i{background:var(--weak); border-radius:0; border-color:transparent;
-  clip-path:polygon(50% 0, 100% 100%, 0 100%)}
-.p-dot[data-s="unrelated"] i{background:var(--line); border-color:transparent}
-.lg[data-s="supports"] i{background:var(--strong)}
-.lg[data-s="mixed"] i{background:transparent; border-color:var(--mid)}
-.lg[data-s="against"] i{background:var(--weak); border-radius:0;
-  clip-path:polygon(50% 0, 100% 100%, 0 100%)}
-.rail[data-s="supports"]{background:var(--strong)}
-.rail[data-s="mixed"]{background:var(--mid)}
-.rail[data-s="against"]{background:var(--weak)}
-.rail[data-s="unrelated"]{background:var(--line)}
-.chip[data-k="supports"]{background:var(--strong-soft); color:var(--strong)}
-.chip[data-k="mixed"]{background:var(--mid-soft); color:var(--mid)}
-.chip[data-k="against"]{background:var(--weak-soft); color:var(--weak)}
 .brand-mark{width:26px; height:26px; flex:0 0 26px; color:var(--accent)}
 .brand-name{font-size:15px; font-weight:600; letter-spacing:-.015em}
 .nav{display:flex; flex-direction:column; gap:2px; padding:0 10px}
