@@ -1168,7 +1168,7 @@ function renderSearch(){
   </form>`;
 
   const hint = S.hint
-    ? `<div class="notice" role="status">${svg("i-alert")}<div>${esc(S.hint)}</div></div>`
+    ? `<div class="notice" id="hint" role="status">${svg("i-alert")}<div>${esc(S.hint)}</div></div>`
     : "";
 
   const working = S.busy ? `<div class="working" role="status" aria-live="polite">
@@ -2049,7 +2049,12 @@ document.addEventListener("submit", (ev) => {
 
 document.addEventListener("input", (ev) => {
   const el = ev.target;
-  if (el.id === "q") { S.q = el.value; if (S.hint && el.value.trim()) { S.hint = ""; render(); } }
+  if (el.id === "q") {
+    S.q = el.value;
+    /* The hint goes as soon as they start typing, by removing the node rather than
+       re-rendering: a render rebuilds the search box and would lose the caret. */
+    if (S.hint && el.value.trim()) { S.hint = ""; const h = $("hint"); if (h) h.remove(); }
+  }
   if (el.id === "f-from") S.yearFrom = el.value.replace(/\D/g, "").slice(0, 4);
   if (el.id === "f-to")   S.yearTo   = el.value.replace(/\D/g, "").slice(0, 4);
   if (el.id === "q-list") {
