@@ -500,7 +500,9 @@ function meta(p){
   if (p.authors) b.push(esc(p.authors.length > 90 ? p.authors.slice(0, 88) + "…" : p.authors));
   if (p.journal) b.push(`<i>${esc(p.journal)}</i>`);
   if (p.year) b.push(`<span class="num">${p.year}</span>`);
-  if (p.citations != null) b.push(`<span class="mono">${p.citations.toLocaleString()} cites</span>`);
+  /* Europe PMC counts only citations from inside its own index, so this runs well below
+     Google Scholar and is 0 for anything recent. Labelled, not silently shown as "cites". */
+  if (p.citations != null) b.push(`<span class="mono" title="Citations from within Europe PMC's index only — lower than Google Scholar or Scopus">${p.citations.toLocaleString()} EPMC cites</span>`);
   return `<div class="card-meta">${b.join('<span class="sep">·</span>')}</div>`;
 }
 function card(p, idx){
@@ -750,6 +752,10 @@ function renderAbout(){
     <ul>
       <li>It does not read the papers or summarise their findings. No AI is involved anywhere in this site.</li>
       <li>It does not judge quality within a row — no risk-of-bias scoring, no journal ranking.</li>
+      <li>Citation counts are <b>Europe PMC's own</b>, counting only citations from publications
+        inside its index. They run well below Google Scholar or Scopus — often by half — and read
+        0 for anything published recently. Use them to compare papers with each other here, never
+        as a paper's true citation count.</li>
       <li>It does not know whether a paper supports or contradicts your question. The rows tell you how much a paper <i>could</i> settle, not what it found.</li>
       <li>It is not a systematic review tool. One search on one database, ranked by relevance, is a starting point and not a reproducible search strategy.</li>
       <li>It is not medical advice, and nothing here should be used to make a decision about a patient or about yourself.</li>
