@@ -384,6 +384,10 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .chip[data-k="retracted"]{background:var(--weak); color:#fff; font-weight:700}
 .chip[data-k="retracted"] svg{width:11px; height:11px}
 .chip[data-k="preprint"]{background:var(--mid-soft); color:var(--mid)}
+.chip[data-k="nct"]{background:var(--accent-soft); color:var(--accent-ink)}
+.chip[data-k="fund"]{background:transparent; border-color:var(--line); color:var(--muted); font-weight:500}
+a.chip{text-decoration:none}
+a.chip:hover{filter:brightness(1.08); text-decoration:underline}
 .card[data-retracted="1"]{border-color:color-mix(in srgb, var(--weak) 55%, var(--line))}
 .card[data-retracted="1"] .card-title{text-decoration:line-through; text-decoration-thickness:1px}
 .chip[data-k="n"]{font-family:var(--f-data); font-weight:500}

@@ -261,6 +261,59 @@ async function toDocxBlob(name, rows, styleKey){
   return d.Packer.toBlob(new d.Document({sections: [{children}]}));
 }
 
-window.EDCite = { STYLES, format, plain, order, toDocxBlob, authors };
+/* An evidence table is the skeleton of a literature review: one row per study, with the
+   things you have to compare it on. Landscape, because four columns of prose is not a
+   portrait shape. */
+async function toTableDocxBlob(name, rows){
+  const d = await loadDocx();
+  const sorted = order(rows, "vancouver");
+
+  const cell = (text, opts) => new d.TableCell({
+    children: [new d.Paragraph({
+      children: [new d.TextRun({text: String(text == null ? "" : text), ...(opts || {})})],
+      spacing: {before: 60, after: 60}
+    })],
+    margins: {top: 60, bottom: 60, left: 100, right: 100}
+  });
+
+  const header = new d.TableRow({
+    tableHeader: true,
+    children: ["Study", "Design", "Sample", "Your note"].map(h => cell(h, {bold: true}))
+  });
+
+  const body = sorted.map(p => {
+    const who = authors(p)[0];
+    const study = `${who ? who.last : clean(p.authors) || "Unknown"}${p.year ? ` (${p.year})` : ""}`;
+    const flag = p.retracted ? "RETRACTED — " : p.preprint ? "Preprint — " : "";
+    return new d.TableRow({children: [
+      new d.TableCell({
+        children: [
+          new d.Paragraph({children: [new d.TextRun({text: flag + study, bold: true,
+            ...(p.retracted ? {color: "B3261E"} : {})})]}),
+          new d.Paragraph({children: [new d.TextRun({text: stripDot(p.title), size: 18})], spacing: {after: 60}})
+        ],
+        margins: {top: 60, bottom: 60, left: 100, right: 100}
+      }),
+      cell(p.design || ""),
+      cell(p.n ? String(p.n) : "not stated"),
+      cell(p.note || "")
+    ]});
+  });
+
+  const doc = new d.Document({sections: [{
+    properties: {page: {size: {orientation: d.PageOrientation.LANDSCAPE}}},
+    children: [
+      new d.Paragraph({children: [new d.TextRun({text: name || "Evidence table", bold: true, size: 28})],
+        spacing: {after: 200}}),
+      new d.Table({width: {size: 100, type: d.WidthType.PERCENTAGE}, rows: [header, ...body]}),
+      new d.Paragraph({children: [new d.TextRun({
+        text: `${sorted.length} stud${sorted.length === 1 ? "y" : "ies"} · exported from Evidence Desk. Designs are as indexed, not as judged; check each one.`,
+        size: 16, color: "888888"})], spacing: {before: 300}})
+    ]
+  }]});
+  return d.Packer.toBlob(doc);
+}
+
+window.EDCite = { STYLES, format, plain, order, toDocxBlob, toTableDocxBlob, authors };
 
 })();

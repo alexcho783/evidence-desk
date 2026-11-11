@@ -520,6 +520,11 @@ function normalisePsy(w){
     fullText: ((w.best_oa_location || {}).landing_page_url) || "",
     source: "psy",
     retracted: !!w.is_retracted,
+    grants: ((w.grants || []).map(g => String(g.funder_display_name || "")).filter(Boolean))
+      .filter((v, i, a) => a.indexOf(v) === i).slice(0, 4),
+    freeFullText: ((w.best_oa_location || {}).landing_page_url) || "",
+    nctIds: [...new Set((abstract.match(/\bNCT\d{8}\b/g) || []))].slice(0, 3),
+    openalexId: String(w.id || "").split("/").pop(),
     concern: false, erratum: false,
     preprint: w.type === "preprint",
     journalAbbrev: "",
@@ -539,6 +544,16 @@ function normalisePsy(w){
 
 async function fetchOpenAlex(cursor){
   const p = new URLSearchParams();
+  const doiHit = String(S.q).match(/\b(10\.\d{4,9}\/[^\s"<>]+)/);
+  if (doiHit) {
+    /* A DOI lookup should not be narrowed to one field, or it finds nothing. */
+    const u = new URLSearchParams({filter: "doi:" + doiHit[1].replace(/[.,;)\]]+$/, ""), "per-page": "1"});
+    const r = await fetch(OPENALEX + "?" + u.toString(), {headers:{Accept:"application/json"}})
+      .catch(() => { throw {kind:"network"}; });
+    if (!r.ok) throw {kind:"server", status:r.status};
+    const dd = await r.json().catch(() => { throw {kind:"parse"}; });
+    return {rows:(dd.results || []).map(normalisePsy), hitCount:(dd.meta || {}).count || 0, next:null};
+  }
   p.set("search", S.q.trim());
   const filters = [PSYCH_FIELD];
   if (S.openOnly) filters.push("is_oa:true");
@@ -645,7 +660,20 @@ async function fetchTrials(cursor){
 
 /* ══ Europe PMC ═══════════════════════════════════════════ */
 
+/* A pasted identifier is a lookup, not a phrase search. Recognising it here means the
+   search box doubles as "add this specific paper" with no extra UI. */
+function identifierQuery(raw){
+  const q = String(raw || "").trim();
+  const doi = q.match(/\b(10\.\d{4,9}\/[^\s"<>]+)/);
+  if (doi) return `DOI:"${doi[1].replace(/[.,;)\]]+$/, "")}"`;
+  const pmid = q.match(/^(?:pmid[:\s]*)?(\d{7,8})$/i);
+  if (pmid) return `EXT_ID:${pmid[1]}`;
+  return null;
+}
+
 function buildQuery(){
+  const ident = identifierQuery(S.q);
+  if (ident) return ident;
   const parts = [S.q.trim()];
   const d = DESIGN_FILTERS.find(x => x.k === S.design);
   if (d && d.q) parts.push(d.q);
@@ -664,8 +692,12 @@ function normalise(r){
   const c = classify(r);
   const year = r.pubYear ? parseInt(r.pubYear, 10) : null;
   const authors = dec(r.authorString || "");
-  const ft = ((r.fullTextUrlList && r.fullTextUrlList.fullTextUrl) || [])
-    .filter(u => u.availability === "Open access" || u.availabilityCode === "OA");
+  const ftAll = ((r.fullTextUrlList && r.fullTextUrlList.fullTextUrl) || []);
+  const ft = ftAll.filter(u => u.availability === "Open access" || u.availabilityCode === "OA");
+  /* "Open access" and "there is a free copy" are different facts. A subscription paper can
+     still have a legal free version, which is the one a student actually needs. */
+  const freeAny = ftAll.find(u => /free|open access/i.test(u.availability || "")) || null;
+  const absText = r.abstractText ? String(r.abstractText).replace(/<[^>]+>/g, "").trim() : "";
   return {
     id: (r.source || "X") + ":" + (r.id || slug(r.title || "")),
     title: (r.title || "Untitled").replace(/\.$/, ""),
@@ -677,7 +709,7 @@ function normalise(r){
     pmcid: r.pmcid || "",
     citations: typeof r.citedByCount === "number" ? r.citedByCount : null,
     openAccess: r.isOpenAccess === "Y",
-    abstract: r.abstractText ? String(r.abstractText).replace(/<[^>]+>/g, "").trim() : "",
+    abstract: absText,
     design: c.design, tier: c.tier, designSrc: c.src,
     n: findN(r),
     url: r.doi ? "https://doi.org/" + r.doi
@@ -695,6 +727,12 @@ function normalise(r){
     preprint: ptypes.has("preprint") || r.source === "PPR",
     epmcId: r.id || "",
     epmcSource: r.source || "MED",
+    /* Who paid. Not a verdict, but it belongs beside a design label. */
+    grants: ((((r.grantsList || {}).grant) || []).map(g => dec(g.agency || "")).filter(Boolean))
+      .filter((v, i, a) => a.indexOf(v) === i).slice(0, 4),
+    freeFullText: (freeAny && freeAny.url) || "",
+    /* A trial paper that names its registration can be checked against the registry. */
+    nctIds: [...new Set(absText.match(/\bNCT\d{8}\b/g) || [])].slice(0, 3),
     /* Needed to build a real reference, not just to display a card. */
     journalAbbrev: dec((r.journalInfo && r.journalInfo.journal && r.journalInfo.journal.isoabbreviation) || ""),
     volume: (r.journalInfo && r.journalInfo.volume) || "",
@@ -767,6 +805,39 @@ async function runSearch(q, opts){
   render();
 }
 
+/* OpenAlex computes related works for everything it indexes, so a Europe PMC paper is
+   reached by its DOI. Two round trips: the work itself, then its neighbours in one batch. */
+async function similarTo(paper){
+  const label = paper.title || "this paper";
+  S.open = null; S.confirmDel = false;
+  S.busy = true; S.err = null; S.results = []; S.hitCount = 0;
+  S.cursor = "*"; S.exhausted = true;
+  S.chainLabel = `papers similar to ${label}`;
+  go("search", {silent:true});
+  render();
+  try {
+    const base = paper.openalexId
+      ? "https://api.openalex.org/works/" + encodeURIComponent(paper.openalexId)
+      : "https://api.openalex.org/works/doi:" + encodeURIComponent(paper.doi);
+    const w = await fetch(base, {headers:{Accept:"application/json"}}).then(r => {
+      if (r.status === 404) throw {kind:"notfound"};
+      if (!r.ok) throw {kind:"server", status:r.status};
+      return r.json();
+    });
+    const ids = (w.related_works || []).map(u => String(u).split("/").pop()).filter(Boolean).slice(0, 20);
+    if (!ids.length) { S.busy = false; S.err = {kind:"empty"}; render(); return; }
+    const q = new URLSearchParams({filter: "openalex_id:" + ids.join("|"), "per-page": String(ids.length)});
+    const d = await fetch("https://api.openalex.org/works?" + q.toString(), {headers:{Accept:"application/json"}})
+      .then(r => { if (!r.ok) throw {kind:"server", status:r.status}; return r.json(); });
+    S.results = (d.results || []).map(normalisePsy);
+    S.hitCount = S.results.length;
+  } catch (e) {
+    S.err = (e && e.kind) ? e : {kind:"network"};
+  }
+  S.busy = false;
+  render();
+}
+
 async function loadMore(){
   if (S.loadingMore || S.exhausted || !S.cursor) return;
   S.loadingMore = true; render();
@@ -790,6 +861,7 @@ function errCopy(e){
     case "badquery": return {t:`${src().db} couldn't read that query`, d:"An unmatched quote or bracket will do it. Try plain words, or check the search tips under How it ranks.", retry:false};
     case "rate":     return {t:"Too many searches too quickly", d:`${src().db} is rate-limiting this browser. Wait a few seconds and try again.`, retry:true};
     case "server":   return {t:`${src().db} returned an error`, d:`The service answered with status ${e.status}. It may be briefly down.`, retry:true};
+    case "notfound": return {t:"That paper isn't in OpenAlex", d:"Similar papers are computed by OpenAlex, which does not index every record Europe PMC holds.", retry:false};
     case "parse":    return {t:"Unreadable response", d:`${src().db} answered with something this page couldn't parse.`, retry:true};
     default:         return {t:"Something went wrong", d:"The search didn't complete.", retry:true};
   }
@@ -831,6 +903,12 @@ function chips(p){
   else if (p.concern) c.push(`<span class="chip" data-k="unposted">Expression of concern</span>`);
   if (p.erratum && !p.retracted) c.push(`<span class="chip">Corrected</span>`);
   if (p.preprint) c.push(`<span class="chip" data-k="preprint">Preprint · not peer reviewed</span>`);
+  if (p.freeFullText) c.push(`<a class="chip" data-k="oa" href="${esc(p.freeFullText)}" target="_blank" rel="noopener">Free full text</a>`);
+  else if (p.openAccess) c.push(`<span class="chip" data-k="oa">Open access</span>`);
+  for (const nct of (p.nctIds || []))
+    c.push(`<a class="chip" data-k="nct" href="https://clinicaltrials.gov/study/${esc(nct)}" target="_blank" rel="noopener">Registered ${esc(nct)}</a>`);
+  if ((p.grants || []).length)
+    c.push(`<span class="chip" data-k="fund" title="${esc(p.grants.join(", "))}">Funded by ${esc(p.grants[0])}${p.grants.length > 1 ? ` +${p.grants.length - 1}` : ""}</span>`);
   if (p.source === "trials") {
     c.push(`<span class="chip">${esc(p.trialStatus || "Status unknown")}</span>`);
     /* The whole reason this source exists: a finished trial that never reported. */
@@ -839,7 +917,6 @@ function chips(p){
       : `<span class="chip" data-k="unposted">No results posted</span>`);
   }
   if (p.n) c.push(`<span class="chip" data-k="n">${p.source === "trials" ? "enrolled " : "n = "}${p.n.toLocaleString()}</span>`);
-  if (p.openAccess) c.push(`<span class="chip" data-k="oa">Open access</span>`);
   for (const t of (p.tags || [])) c.push(`<span class="chip" data-k="tag">${esc(t)}</span>`);
   return `<div class="chips">${c.join("")}</div>`;
 }
@@ -878,7 +955,14 @@ function plot(rows){
      columns, a status none of the trial columns match. */
   const placed = rows.filter(p => columns.some(c => c.test(p)));
   const ladder = tiers();
-  const used = ladder.filter(t => placed.some(p => p.tier === t.k));
+  /* Similar papers arrive from a different index and can carry a tier this ladder does not
+     list. Append those rather than drop the papers. */
+  const extra = [...new Set(placed.map(x => x.tier))]
+    .filter(k => TIER[k] && !ladder.some(t => t.k === k))
+    .sort((a, b) => TIER[a].rank - TIER[b].rank)
+    .map(k => ({k, ...TIER[k]}));
+  const full = ladder.concat(extra);
+  const used = full.filter(t => placed.some(x => x.tier === t.k));
   const rows_t = used.length ? used : ladder.slice(0, 3);
 
   const counts = columns.map(c => placed.filter(p => c.test(p)).length);
@@ -932,6 +1016,7 @@ function plot(rows){
     <div class="plot-full">
     <div class="plot-head">
       <span class="plot-title">What kind of evidence answers this</span>
+      <button class="btn btn-sm btn-quiet" id="plot-png" type="button" style="margin-left:auto">${svg("i-down")}Image</button>
       <span class="plot-note">${placed.length} of ${rows.length} shown${undated ? ` · ${undated} undated` : ""}</span>
     </div>
     <div class="plot" style="--cols:${colTracks}" role="img" aria-label="${S.source === 'trials' ? 'Trials arranged by phase and reporting status' : 'Papers arranged by study design strength and publication era'}">${g}</div>
@@ -1012,10 +1097,10 @@ function renderSearch(){
   if (S.results.length) {
     const strong = S.results.filter(p => tierMeta(p.tier).w === "strong").length;
     results = `${S.chainLabel ? `<div class="banner">${svg("i-link")}
-        <span class="grow">Showing papers that cite <b>${esc(S.chainLabel.slice(0, 90))}</b></span>
+        <span class="grow">Showing <b>${esc(S.chainLabel.slice(0, 110))}</b></span>
         <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
       <div class="list-head">
-        <span class="list-h">${S.chainLabel ? "Citing papers" : "Results"}</span>
+        <span class="list-h">${S.chainLabel ? "Related papers" : "Results"}</span>
         <span class="list-n">${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above</span>
         <span style="flex:1"></span>
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
@@ -1128,7 +1213,9 @@ function renderList(){
         ${EDCITE().STYLES.map(st => `<option value="${st.k}"${S.citeStyle === st.k ? " selected" : ""}>${st.label}</option>`).join("")}
       </select>
       <button class="btn btn-sm btn-primary" id="export-docx" type="button" ${S.exporting ? "disabled" : ""}>
-        ${svg("i-down")}${S.exporting ? "Building…" : "Export Word"}</button>
+        ${svg("i-down")}${S.exporting ? "Building…" : "References"}</button>
+      <button class="btn btn-sm" id="export-table" type="button" ${S.exporting ? "disabled" : ""}>
+        ${svg("i-down")}Evidence table</button>
       <button class="btn btn-sm" data-export="bib">${svg("i-down")}BibTeX</button>
       <button class="btn btn-sm" data-export="ris">${svg("i-down")}RIS</button>
       <span style="flex:1"></span>
@@ -1249,9 +1336,15 @@ function renderSheet(){
       <h3 class="sheet-title">${esc(p.title)}</h3>
       ${p.authors ? `<p class="sheet-authors">${esc(p.authors)}</p>` : ""}
       <dl class="kv">${kv.join("")}</dl>
-      ${p.epmcId ? `<div style="margin-top:14px">
-        <button class="btn btn-sm" type="button" data-cited="${esc(p.epmcSource || "MED")}:${esc(p.epmcId)}">
-          ${svg("i-search")}Papers citing this</button>
+      ${(p.epmcId || (p.authorList || []).length) ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
+        ${p.epmcId ? `<button class="btn btn-sm" type="button" data-cited="${esc(p.epmcSource || "MED")}:${esc(p.epmcId)}">
+          ${svg("i-search")}Papers citing this</button>` : ""}
+        ${(p.authorList || []).length ? (() => {
+            const a = p.authorList[0];
+            const name = `${a.last}${a.initials ? " " + a.initials : ""}`;
+            return `<button class="btn btn-sm" type="button" data-author="${esc(name)}">${svg("i-search")}More by ${esc(name)}</button>`;
+          })() : ""}
+        ${(p.doi || p.openalexId) ? `<button class="btn btn-sm" type="button" data-similar="1">${svg("i-link")}Similar papers</button>` : ""}
       </div>` : ""}
       ${saved ? `
         <div class="sh-head">Collections</div>
@@ -1498,6 +1591,101 @@ function downloadBlob(name, blob){
 
 /* The docx library is fetched on the first export and cached by the browser after that,
    so the ~1.3 MB cost is paid once and never on a plain search. */
+/* Drawn from the data rather than screenshotted from the page, so it is crisp at any size
+   and needs no library. Colours are literal because CSS variables do not resolve inside an
+   <img>, and a figure for a document wants the light palette anyway. */
+function plotSvg(rows){
+  const columns = cols();
+  const placed = rows.filter(p => columns.some(c => c.test(p)));
+  const ladder = tiers();
+  const extra = [...new Set(placed.map(x => x.tier))]
+    .filter(k => TIER[k] && !ladder.some(t => t.k === k))
+    .sort((a, b) => TIER[a].rank - TIER[b].rank).map(k => ({k, ...TIER[k]}));
+  const rowsT = ladder.concat(extra).filter(t => placed.some(x => x.tier === t.k));
+  if (!rowsT.length) return null;
+
+  const LAB = 160, COLW = 190, RH = 56, TOP = 86, PAD = 24;
+  const W = LAB + COLW * columns.length + PAD * 2;
+  const H = TOP + RH * rowsT.length + 64;
+  const FILL = {strong:"#0F6B52", mid:"#8A5A00", weak:"#D9C9A8"};
+  const esc2 = t => esc(t);
+  let o = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Inter, Helvetica, Arial, sans-serif">`;
+  o += `<rect width="${W}" height="${H}" fill="#ffffff"/>`;
+  o += `<text x="${PAD}" y="30" font-size="15" font-weight="600" fill="#101418">What kind of evidence answers this</text>`;
+  o += `<text x="${PAD}" y="50" font-size="11.5" fill="#5A6472">${esc2(S.lastQ || "")}</text>`;
+
+  columns.forEach((c, i) => {
+    const x = PAD + LAB + COLW * i + COLW / 2;
+    o += `<text x="${x}" y="${TOP - 22}" font-size="11.5" font-weight="600" fill="#5A6472" text-anchor="middle">${esc2(c.label)}</text>`;
+    o += `<text x="${x}" y="${TOP - 8}" font-size="10" fill="#8A94A3" text-anchor="middle">${esc2(c.sub)}</text>`;
+  });
+  o += `<line x1="${PAD}" y1="${TOP - 1}" x2="${W - PAD}" y2="${TOP - 1}" stroke="#D7DDE6"/>`;
+
+  rowsT.forEach((t, ri) => {
+    const y = TOP + RH * ri;
+    o += `<text x="${PAD}" y="${y + RH / 2 - 2}" font-size="12" font-weight="600" fill="#101418">${esc2(t.label)}</text>`;
+    o += `<text x="${PAD}" y="${y + RH / 2 + 13}" font-size="10" fill="#8A94A3">${esc2(t.note)}</text>`;
+    o += `<line x1="${PAD}" y1="${y + RH}" x2="${W - PAD}" y2="${y + RH}" stroke="#E6EBF1"/>`;
+    columns.forEach((c, ci) => {
+      const cell = placed.filter(x => x.tier === t.k && c.test(x));
+      const x0 = PAD + LAB + COLW * ci + 14;
+      if (!cell.length) {
+        o += `<text x="${x0 + COLW / 2 - 14}" y="${y + RH / 2 + 4}" font-size="11" fill="#D7DDE6" text-anchor="middle">—</text>`;
+        return;
+      }
+      cell.slice(0, 18).forEach((pp, i) => {
+        const cx = x0 + (i % 9) * 19 + 6;
+        const cy = y + RH / 2 + (cell.length > 9 ? (i < 9 ? -9 : 9) : 0);
+        o += `<circle cx="${cx}" cy="${cy}" r="6" fill="${FILL[t.w] || FILL.weak}"/>`;
+      });
+    });
+  });
+
+  o += `<line x1="${PAD + LAB - 10}" y1="${TOP - 1}" x2="${PAD + LAB - 10}" y2="${TOP + RH * rowsT.length}" stroke="#E6EBF1"/>`;
+  o += `<text x="${PAD}" y="${H - 22}" font-size="10.5" fill="#8A94A3">${placed.length} of ${rows.length} records placed · higher rows carry more weight · Evidence Desk</text>`;
+  o += `</svg>`;
+  return o;
+}
+
+async function exportPlotImage(){
+  if (!S.results.length) { toast("Run a search first."); return; }
+  const svg = plotSvg(S.results);
+  if (!svg) { toast("Nothing to draw for this search."); return; }
+  const url = URL.createObjectURL(new Blob([svg], {type:"image/svg+xml;charset=utf-8"}));
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("render")); img.src = url; });
+    const scale = 2;
+    const c = document.createElement("canvas");
+    c.width = img.width * scale; c.height = img.height * scale;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    await new Promise(res => c.toBlob(b => { if (b) downloadBlob(slug(S.lastQ || "evidence-plot") + ".png", b); res(); }, "image/png"));
+    toast("Plot saved as an image.");
+  } catch (e) {
+    toast("Couldn't render the plot as an image.");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function exportTable(){
+  const rows = listRows();
+  if (!rows.length) { toast("Nothing to export with these filters."); return; }
+  const cite = EDCITE();
+  if (typeof cite.toTableDocxBlob !== "function") { toast("Export isn't available in this build."); return; }
+  S.exporting = true; render();
+  try {
+    const name = S.coll === "all" ? "Evidence table" : S.coll;
+    downloadBlob(slug(name) + "-table.docx", await cite.toTableDocxBlob(name, rows));
+    toast(`Evidence table exported with ${rows.length} stud${rows.length === 1 ? "y" : "ies"}.`);
+  } catch (e) {
+    toast("Couldn't build the table — the export library didn't load.");
+  }
+  S.exporting = false; render();
+}
+
 async function exportDocx(){
   const rows = listRows();
   if (!rows.length) { toast("Nothing to export with these filters."); return; }
@@ -1560,7 +1748,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-cited],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
@@ -1586,13 +1774,23 @@ document.addEventListener("click", (ev) => {
   if (t.id === "coll-del-no")  { S.confirmColl = false; render(); return; }
   if (t.id === "coll-del-yes") { deleteColl(S.coll); S.confirmColl = false; return; }
   if (t.id === "export-docx")  { exportDocx(); return; }
+  if (t.id === "export-table") { exportTable(); return; }
+  if (t.id === "plot-png")     { exportPlotImage(); return; }
+  if (t.dataset.author) {
+    const name = t.dataset.author;
+    S.open = null; S.confirmDel = false;
+    S.q = S.source === "psy" ? `"${name}"` : `AUTH:"${name}"`;
+    runSearch(S.q, {chain: `everything by ${name}`});
+    return;
+  }
+  if (t.dataset.similar && S.open) { similarTo(S.open); return; }
   if (t.dataset.cited) {
     const [srcCode, id] = t.dataset.cited.split(":");
     const label = (S.open && S.open.title) || "this paper";
     S.open = null; S.confirmDel = false;
     S.source = "med";
     S.q = `CITES:${id}_${srcCode}`;
-    runSearch(S.q, {chain: label});
+    runSearch(S.q, {chain: `papers that cite ${label}`});
     return;
   }
   if (t.dataset.src) {
