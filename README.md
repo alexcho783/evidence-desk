@@ -147,6 +147,42 @@ altogether.
 
 **6. Set `contactEmail`** so the privacy page can tell people who holds their data.
 
+## Optional: AI synthesis
+
+Also off by default, and layered on top of accounts — signed-out visitors never trigger it. When
+on, each search additionally asks a model what the retrieved abstracts say about the question,
+and renders a short verdict above the results.
+
+**What it deliberately does not do:** classify study design. That comes from MEDLINE publication
+types, assigned by human indexers, and is more reliable than anything a model would infer. The
+model only adds what metadata cannot give you — which way a paper points, and a synthesis across
+them. A bad model answer therefore cannot move a paper into the wrong row.
+
+**1. Get a Gemini API key** at [aistudio.google.com](https://aistudio.google.com/apikey). Free,
+no card. `gemini-3.6-flash` is free-tier eligible.
+
+**2. Deploy the Edge Function.** In the Supabase dashboard → Edge Functions → Deploy a new
+function, name it `appraise`, and paste in `supabase/functions/appraise/index.ts`. No CLI needed.
+
+**3. Add the secret.** Edge Functions → Secrets → add `GEMINI_API_KEY`.
+
+The function enforces the limits that bound cost and abuse — at most 20 papers, 1,200 characters
+of abstract each, a 300-character question — server-side, because the browser can lie about all
+three. It requires a valid session, so only signed-in people can spend the quota.
+
+If you later need to change model, `MODEL` is one constant at the top of the function.
+
+### Google's free tier trains on your data
+
+This is the part to be deliberate about. Google uses free-tier API data to improve its products;
+paid-tier data is excluded. The site's privacy page says so plainly and tells people to treat the
+search box as public while signed in. Abstracts are already public literature, but the *question*
+is the user's own, so this matters.
+
+If that trade stops being acceptable — more users, or more sensitive questions — the fix is a
+paid key rather than a rewrite: Gemini's paid tier excludes your data, and swapping to a different
+provider means editing one function, not the site.
+
 ### If you switch accounts on, you take on data protection duties
 
 Storing other people's email addresses and reading lists makes you a data controller under UK

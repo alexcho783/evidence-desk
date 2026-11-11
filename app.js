@@ -65,7 +65,9 @@ const S = {
   open:null, confirmDel:false, confirmClear:false,
   /* Accounts are optional; everything below stays inert when config.js is blank. */
   account:{user:null, busy:false, note:"", synced:false, sent:"", confirmWipe:false},
-  signIn:false
+  signIn:false,
+  /* Appraisal: what the model says about this search. Signed-in only; absent otherwise. */
+  appraisal:{busy:false, verdict:null, certainty:null, err:null, model:""}
 };
 
 /* ══ Helpers ═══════════════════════════════════════════ */
@@ -413,6 +415,7 @@ async function runSearch(q, opts){
   S.q = q; S.lastQ = q;
   S.busy = true; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = false;
+  S.appraisal = {busy:false, verdict:null, certainty:null, err:null, model:""};
   go("search", {silent:true});
   render();
 
@@ -429,6 +432,7 @@ async function runSearch(q, opts){
   S.busy = false;
   if (!keepUrl) pushUrl();
   render();
+  appraise();
 }
 
 async function loadMore(){
@@ -445,6 +449,36 @@ async function loadMore(){
     S.exhausted = true;
   }
   S.loadingMore = false; render();
+}
+
+/* Runs after results are already on screen, so the papers never wait on the model.
+   Signed-out visitors simply never see it, and a failure leaves the page as it was. */
+async function appraise(){
+  const A = window.EDAuth;
+  if (!A || !A.enabled || !A.user() || !S.results.length) return;
+  const forQuery = S.lastQ;
+  S.appraisal = {busy:true, verdict:null, certainty:null, err:null, model:""};
+  render();
+  try {
+    const out = await A.appraise(forQuery, S.results.slice(0, 20).map(p => ({
+      title:p.title, journal:p.journal, year:p.year, abstract:p.abstract
+    })));
+    /* A newer search may have finished while this was in flight; don't label it. */
+    if (forQuery !== S.lastQ) return;
+    const byI = new Map((out.papers || []).map(r => [Number(r.i), r]));
+    S.results.forEach((p, i) => {
+      const r = byI.get(i + 1);
+      if (r) {
+        p.stance = ["supports","mixed","against","unrelated"].includes(r.stance) ? r.stance : null;
+        p.takeaway = typeof r.takeaway === "string" ? r.takeaway : "";
+      }
+    });
+    S.appraisal = {busy:false, verdict:out.verdict, certainty:out.certainty, err:null, model:out.model || ""};
+  } catch (e) {
+    if (forQuery !== S.lastQ) return;
+    S.appraisal = {busy:false, verdict:null, certainty:null, err:(e && e.message) || "The appraisal failed.", model:""};
+  }
+  render();
 }
 
 function errCopy(e){
@@ -487,8 +521,13 @@ function readUrl(){
 
 /* ══ Shared rendering ═══════════════════════════════════════════ */
 
+const STANCE_LABEL = {supports:"Supports", mixed:"Mixed", against:"Against", unrelated:"Off-question"};
+
 function chips(p){
-  const c = [`<span class="chip" data-k="tier">${esc(p.design)}${p.designSrc === "inferred" ? ` <span class="chip-inf">inferred</span>` : ""}</span>`];
+  const c = [];
+  if (p.stance && p.stance !== "unrelated")
+    c.push(`<span class="chip" data-k="${p.stance}">${STANCE_LABEL[p.stance]}</span>`);
+  c.push(`<span class="chip" data-k="tier">${esc(p.design)}${p.designSrc === "inferred" ? ` <span class="chip-inf">inferred</span>` : ""}</span>`);
   if (p.n) c.push(`<span class="chip" data-k="n">n = ${p.n.toLocaleString()}</span>`);
   if (p.openAccess) c.push(`<span class="chip" data-k="oa">Open access</span>`);
   for (const t of (p.tags || [])) c.push(`<span class="chip" data-k="tag">${esc(t)}</span>`);
@@ -505,9 +544,11 @@ function meta(p){
 function card(p, idx){
   const saved = S.list.has(p.id);
   const w = TIER[p.tier] ? TIER[p.tier].w : "weak";
-  const snip = p.abstract ? p.abstract.slice(0, 190).trim() + (p.abstract.length > 190 ? "…" : "") : "";
+  const snip = p.takeaway
+    ? p.takeaway
+    : (p.abstract ? p.abstract.slice(0, 190).trim() + (p.abstract.length > 190 ? "…" : "") : "");
   return `<article class="card" id="card-${esc(p.id)}">
-    <div class="rail" data-w="${w}" aria-hidden="true"></div>
+    <div class="rail" data-w="${w}"${p.stance ? ` data-s="${p.stance}"` : ""} aria-hidden="true"></div>
     <div class="card-body">
       <button class="card-title" data-open="${esc(p.id)}">${idx != null ? `<span class="mono" style="color:var(--faint)">${idx}.</span> ` : ""}${esc(p.title)}</button>
       ${meta(p)}
@@ -542,8 +583,10 @@ function plot(rows){
       const cell = placed.filter(p => p.tier === t.k && e.test(p.year));
       g += `<div class="p-cell">` + (cell.length
         ? cell.map(p => {
-            const lab = `${p.title.slice(0,70)} — ${p.design}, ${p.year}${p.n ? `, n = ${p.n}` : ""}`;
-            return `<button class="p-dot" data-w="${t.w}" data-saved="${S.list.has(p.id) ? 1 : 0}"
+            const lab = `${p.title.slice(0,70)} — ${p.design}, ${p.year}${p.n ? `, n = ${p.n}` : ""}${
+              p.stance ? `, ${STANCE_LABEL[p.stance].toLowerCase()}` : ""}`;
+            return `<button class="p-dot" data-w="${t.w}"${p.stance ? ` data-s="${p.stance}"` : ""}
+              data-saved="${S.list.has(p.id) ? 1 : 0}"
               data-jump="${esc(p.id)}" title="${esc(lab)}" aria-label="${esc(lab)}"><i></i></button>`;
           }).join("")
         : `<span class="p-empty">—</span>`) + `</div>`;
@@ -558,9 +601,13 @@ function plot(rows){
     </div>
     <div class="plot" style="--cols:${cols}" role="img" aria-label="Papers arranged by study design strength and publication era">${g}</div>
     <div class="plot-legend">
-      <span class="lg" data-w="strong"><i></i>Strong design</span>
-      <span class="lg" data-w="mid"><i></i>Observational</span>
-      <span class="lg" data-w="weak"><i></i>Weak or indirect</span>
+      ${rows.some(p => p.stance)
+        ? `<span class="lg" data-s="supports"><i></i>Supports</span>
+           <span class="lg" data-s="mixed"><i></i>Mixed</span>
+           <span class="lg" data-s="against"><i></i>Against</span>`
+        : `<span class="lg" data-w="strong"><i></i>Strong design</span>
+           <span class="lg" data-w="mid"><i></i>Observational</span>
+           <span class="lg" data-w="weak"><i></i>Weak or indirect</span>`}
       <span class="lg" data-w="saved"><i></i>Saved</span>
       <span style="color:var(--faint)">Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper.</span>
     </div>
@@ -569,11 +616,54 @@ function plot(rows){
 
 /* ══ Search view ═══════════════════════════════════════════ */
 
+/* The synthesis sits above the plot, and is clearly marked as the one part of the page
+   written by a model rather than read off an index. */
+function verdictCard(){
+  const A = window.EDAuth;
+  if (!A || !A.enabled) return "";
+  const a = S.appraisal;
+
+  if (a.busy) {
+    return `<div class="working" role="status" aria-live="polite">
+      <span class="spin" aria-hidden="true"></span>
+      <div><div class="working-t">Reading the abstracts</div>
+      <div class="working-s">Working out what each paper says about your question</div></div></div>`;
+  }
+  if (a.err) {
+    return `<div class="notice">${svg("i-alert")}<div><b>No synthesis for this search.</b> ${esc(a.err)}
+      The papers below are unaffected — they come from Europe PMC, not from the model.</div></div>`;
+  }
+  if (!a.verdict) {
+    if (!A.user()) {
+      return `<div class="banner">${svg("i-spark")}
+        <span class="grow"><b>Sign in for a synthesis.</b> Signed in, each search also gets a short
+        read of what these abstracts say about your question.</span>
+        <button class="btn btn-sm btn-primary" id="sign-in-open" type="button">Sign in</button></div>`;
+    }
+    return "";
+  }
+  return `<div class="verdict">
+    <div class="verdict-top">
+      <span class="vt-lab">${svg("i-spark")}Written by AI</span>
+      <span class="certainty" data-c="${esc(a.certainty)}">Certainty: ${esc(a.certainty)}</span>
+    </div>
+    <p class="verdict-text">${esc(a.verdict)}</p>
+    <div class="verdict-foot">
+      <span class="grow">Written from the abstracts on this page, not the full papers${
+        a.model ? `, by ${esc(a.model)}` : ""}. It can be wrong — read the papers before relying on it.</span>
+      <button class="btn btn-sm" data-redo="1">${svg("i-retry")}Redo</button>
+    </div>
+  </div>`;
+}
+
 function renderSearch(){
   const hero = `<div>
     <div class="eyebrow">Search the medical literature</div>
     <h1 class="hero-h">Not just what the papers say — <em>what kind of papers they are.</em></h1>
-    <p class="hero-sub">Every result is placed by study design and by how recent it is, so you can see at a glance whether a question is answered by current trials or by one old review. Literature from Europe PMC. No account, nothing stored anywhere but your own browser.</p>
+    <p class="hero-sub">Every result is placed by study design and by how recent it is, so you can see at a glance whether a question is answered by current trials or by one old review. Literature from Europe PMC. ${
+      (window.EDAuth && window.EDAuth.enabled)
+        ? "No account needed; signing in adds a synthesis and syncs your reading list."
+        : "No account, nothing stored anywhere but your own browser."}</p>
   </div>
 
   <form id="search-form">
@@ -631,6 +721,7 @@ function renderSearch(){
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
         <button class="btn btn-sm" id="save-all">${svg("i-plus")}Save all shown</button>
       </div>
+      ${verdictCard()}
       ${plot(S.results)}
       <div class="list-head"><span class="list-h">Papers</span></div>
       <div class="cards">${S.results.map((p, i) => card(p, i + 1)).join("")}</div>
@@ -744,9 +835,14 @@ function renderAbout(){
 
     <h2>What it does not do</h2>
     <ul>
-      <li>It does not read the papers or summarise their findings. No AI is involved anywhere in this site.</li>
+      <li>The rows and columns involve <b>no AI at all</b>. Study design comes from publication
+        types assigned by human indexers; the era comes from the publication date. Nothing a model
+        says can move a paper into a different row.</li>
+      <li>Signed in, a language model does one extra job: it reads the abstracts on the page and
+        writes the synthesis at the top, marking which way each paper points. That part is labelled
+        wherever it appears, it reads abstracts rather than full papers, and it can be wrong.</li>
+      <li>It does not read the full papers, and never will — abstracts omit most limitations.</li>
       <li>It does not judge quality within a row — no risk-of-bias scoring, no journal ranking.</li>
-      <li>It does not know whether a paper supports or contradicts your question. The rows tell you how much a paper <i>could</i> settle, not what it found.</li>
       <li>It is not a systematic review tool. One search on one database, ranked by relevance, is a starting point and not a reproducible search strategy.</li>
       <li>It is not medical advice, and nothing here should be used to make a decision about a patient or about yourself.</li>
     </ul>
@@ -939,6 +1035,18 @@ function renderPrivacy(){
     ` : `<p>Accounts are not switched on for this site, so there is no server and nothing is stored
       away from your browser at all.</p>`}
 
+    <h2>The AI synthesis</h2>
+    ${on ? `
+    <p>Signed in, each search also sends your question and the abstracts it found to Google's Gemini
+      API, which writes the short synthesis above the results. The abstracts are already public,
+      published literature. Your question is not. Nothing else goes with it — not your email, not
+      your reading list, not your notes.</p>
+    <p><b>This runs on Google's free tier, and Google uses free-tier data to improve its products.</b>
+      So treat the search box as public: if a question would reveal something about you or someone
+      you know, don't type it while signed in. Signed out, nothing you search is ever sent to Google,
+      and the rest of the page works exactly the same.</p>
+    ` : `<p>No AI runs on this site.</p>`}
+
     <h2>Deleting everything</h2>
     ${on ? `
     <p>You can clear the reading list on this device at any time from the reading list page. If you
@@ -1009,6 +1117,7 @@ function home(){
   S.q = ""; S.lastQ = "";
   S.results = []; S.hitCount = 0; S.cursor = "*"; S.exhausted = false;
   S.busy = false; S.loadingMore = false; S.err = null;
+  S.appraisal = {busy:false, verdict:null, certainty:null, err:null, model:""};
   S.design = "any"; S.sort = "relevance"; S.openOnly = false;
   S.yearFrom = ""; S.yearTo = "";
   S.filter = ""; S.open = null; S.confirmDel = false; S.confirmClear = false;
