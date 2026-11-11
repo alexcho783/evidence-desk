@@ -18,16 +18,16 @@ const Y = new Date().getFullYear();
    medical ladder would misrepresent both, so each field gets its own, drawn from the same
    shared set of tiers so a mixed reading list still sorts sensibly. */
 const TIER = {
-  synthesis:   {label:"Synthesis",     note:"Meta-analysis · systematic review", w:"strong", rank:0},
-  guideline:   {label:"Guideline",     note:"Practice guideline · consensus",    w:"strong", rank:1},
-  trial:       {label:"Trial",         note:"Randomised · controlled",           w:"strong", rank:2},
-  cohort:      {label:"Observational", note:"Cohort · case–control",             w:"mid",    rank:3},
-  experiment:  {label:"Experiment",    note:"Controlled lab study",              w:"mid",    rank:4},
-  survey:      {label:"Survey",        note:"Cross-sectional · correlational",   w:"weak",   rank:5},
-  qualitative: {label:"Qualitative",   note:"Interview · thematic analysis",     w:"weak",   rank:6},
-  case:        {label:"Case",          note:"Case report · series",              w:"weak",   rank:7},
-  preclinical: {label:"Preclinical",   note:"Animal · in vitro · modelling",     w:"weak",   rank:8},
-  narrative:   {label:"Narrative",     note:"Review · comment · editorial",      w:"weak",   rank:9}
+  synthesis:   {label:"Synthesis",     note:"Meta-analysis · systematic review", w:"strong", rank:0, noun:["synthesis","syntheses"]},
+  guideline:   {label:"Guideline",     note:"Practice guideline · consensus",    w:"strong", rank:1, noun:["guideline","guidelines"]},
+  trial:       {label:"Trial",         note:"Randomised · controlled",           w:"strong", rank:2, noun:["trial","trials"]},
+  cohort:      {label:"Observational", note:"Cohort · case–control",             w:"mid",    rank:3, noun:["cohort study","cohort studies"]},
+  experiment:  {label:"Experiment",    note:"Controlled lab study",              w:"mid",    rank:4, noun:["experiment","experiments"]},
+  survey:      {label:"Survey",        note:"Cross-sectional · correlational",   w:"weak",   rank:5, noun:["survey","surveys"]},
+  qualitative: {label:"Qualitative",   note:"Interview · thematic analysis",     w:"weak",   rank:6, noun:["qualitative study","qualitative studies"]},
+  case:        {label:"Case",          note:"Case report · series",              w:"weak",   rank:7, noun:["case report","case reports"]},
+  preclinical: {label:"Preclinical",   note:"Animal · in vitro · modelling",     w:"weak",   rank:8, noun:["preclinical study","preclinical studies"]},
+  narrative:   {label:"Narrative",     note:"Review · comment · editorial",      w:"weak",   rank:9, noun:["review","reviews"]}
 };
 
 const SOURCES = {
@@ -40,7 +40,7 @@ const SOURCES = {
   psy: {
     label:"Psychology", short:"Psy", db:"OpenAlex",
     ladder:["synthesis","trial","experiment","cohort","survey","qualitative","case","narrative"],
-    overrides:{ cohort:{label:"Longitudinal", note:"Prospective · follow-up"} },
+    overrides:{ cohort:{label:"Longitudinal", note:"Prospective · follow-up", noun:["longitudinal study","longitudinal studies"]} },
     placeholder:"working memory training transfer effects"
   }
 };
@@ -91,6 +91,7 @@ const S = {
   view:"search",
   q:"", lastQ:"",
   source:"med",
+  plotOpen:false,   /* mobile only: the full grid is collapsed until asked for */
   design:"any", sort:"relevance", openOnly:false, yearFrom:"", yearTo:"",
   busy:false, loadingMore:false,
   results:[], hitCount:0, cursor:"*", exhausted:false,
@@ -693,7 +694,30 @@ function plot(rows){
   }
 
   const undated = rows.length - placed.length;
-  return `<section class="plot-card">
+
+  /* The collapsed line has to carry the same reading as the grid: how much of this is
+     strong evidence, what kinds dominate, and whether it is current. */
+  const byTier = {};
+  for (const p of placed) byTier[p.tier] = (byTier[p.tier] || 0) + 1;
+  const topTiers = Object.keys(byTier)
+    .sort((a, b) => byTier[b] - byTier[a]).slice(0, 3)
+    .map(k => { const n = byTier[k], nm = tierMeta(k).noun || ["study","studies"];
+                return `${n} ${n === 1 ? nm[0] : nm[1]}`; });
+  const wCount = {strong:0, mid:0, weak:0};
+  for (const p of placed) wCount[tierMeta(p.tier).w || "weak"]++;
+  const liveEras = ERAS.filter(e => placed.some(p => e.test(p.year)));
+  const eraNote = liveEras.length !== 1 ? ""
+    : ` \u00b7 ${liveEras[0].k === "new" ? `all since ${Y - 4}` : `all ${liveEras[0].label.toLowerCase()}`}`;
+  const summary = `<button class="plot-sum" type="button" data-plot-toggle aria-expanded="${S.plotOpen ? "true" : "false"}">
+      <span class="sum-bar" aria-hidden="true">${["strong","mid","weak"]
+        .map(w => wCount[w] ? `<i data-w="${w}" style="flex:${wCount[w]}"></i>` : "").join("")}</span>
+      <span class="sum-text"><b>Evidence</b> ${esc(topTiers.join(", ") || "nothing placed")}${esc(eraNote)}</span>
+      <svg class="sum-chev" aria-hidden="true"><use href="#i-chev"/></svg>
+    </button>`;
+
+  return `<section class="plot-card" data-open="${S.plotOpen ? 1 : 0}">
+    ${summary}
+    <div class="plot-full">
     <div class="plot-head">
       <span class="plot-title">What kind of evidence answers this</span>
       <span class="plot-note">${placed.length} of ${rows.length} shown${undated ? ` · ${undated} undated` : ""}</span>
@@ -705,6 +729,7 @@ function plot(rows){
       <span class="lg" data-w="weak"><i></i>Weak or indirect</span>
       <span class="lg" data-w="saved"><i></i>Saved</span>
       <span style="color:var(--faint)">Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper.</span>
+    </div>
     </div>
   </section>`;
 }
@@ -1234,7 +1259,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes");
+  const t = ev.target.closest("[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
@@ -1247,6 +1272,7 @@ document.addEventListener("click", (ev) => {
   if (t.id === "wipe-ask") { S.account.confirmWipe = true; render(); return; }
   if (t.id === "wipe-no")  { S.account.confirmWipe = false; render(); return; }
   if (t.id === "wipe-yes") { deleteAccount(); return; }
+  if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
   if (t.dataset.src) {
     if (S.source === t.dataset.src) return;
     S.source = t.dataset.src;

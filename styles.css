@@ -283,6 +283,30 @@ h1,h2,h3{text-wrap:balance; margin:0}
 /* ── Evidence plot ─────────────────────────────── */
 .plot-card{margin-top:20px; background:var(--surface); border:1px solid var(--line-soft);
   border-radius:var(--r-l); overflow:hidden}
+
+/* On a phone the full grid runs to about 80% of the screen, pushing the papers two
+   screens down. Below 700px it collapses to one line that carries the same shape —
+   proportion by strength, the commonest designs, the era — and opens on a tap. The
+   marks cannot simply be made smaller: they are already at the 28px touch minimum. */
+.plot-sum{display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+  padding:13px 16px; color:var(--ink); min-height:48px}
+.plot-sum:hover{background:var(--surface-2)}
+.sum-bar{display:flex; height:8px; width:62px; flex:0 0 62px; border-radius:4px; overflow:hidden; gap:1px}
+.sum-bar i{display:block; min-width:2px}
+.sum-bar i[data-w="strong"]{background:var(--strong)}
+.sum-bar i[data-w="mid"]{background:var(--mid)}
+.sum-bar i[data-w="weak"]{background:color-mix(in srgb, var(--mid) 32%, var(--line))}
+.sum-text{flex:1; min-width:0; font-size:13px; line-height:1.35; color:var(--muted)}
+.sum-text b{color:var(--ink); font-weight:600}
+.sum-chev{width:15px; height:15px; flex:0 0 15px; color:var(--faint); transition:transform .15s}
+.plot-card[data-open="1"] .sum-chev{transform:rotate(90deg)}
+.plot-full{display:none}
+.plot-card[data-open="1"] .plot-full{display:block}
+@media (prefers-reduced-motion:reduce){ .sum-chev{transition:none} }
+@media (min-width:700px){
+  .plot-sum{display:none}
+  .plot-full{display:block}
+}
 .plot-head{display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; padding:15px 18px 0}
 .plot-title{font-size:13.5px; font-weight:600}
 .plot-note{font-size:12px; color:var(--faint)}
