@@ -1089,7 +1089,7 @@ function renderSearch(){
     <p class="hero-sub">Every result is placed by study design and by how recent it is, so you can see at a glance whether a question is answered by current trials or by one old review. Literature from ${esc(src().db)}. ${
       (window.EDAuth && window.EDAuth.enabled)
         ? "No account needed; signing in syncs your reading list across devices."
-        : "No account, nothing stored anywhere but your own browser."}</p>
+        : "No account needed; your reading list stays in this browser."}</p>
   </div>
 
   <form id="search-form">
@@ -1456,7 +1456,7 @@ function renderFoot(){
     <p style="margin:${acct ? "10px" : "0"} 0 0">
       Literature from <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
       ${u ? "Your reading list syncs to your account."
-          : "Nothing you search or save leaves this browser."}
+          : "Your reading list and notes stay in this browser. Searches are sent to the databases."}
       ${A && A.enabled ? ` <button class="linkish" type="button" data-go="privacy">Privacy</button>.` : ""}
     </p>`;
 }
@@ -1526,9 +1526,21 @@ function renderPrivacy(){
       <li>Your <b>reading list and notes</b> stay in this browser until you clear them.</li>
       <li>Your <b>recent searches</b> are kept only for the current browsing session and are gone once
         you close the browser.</li>
-      <li>Your search terms go to <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>,
-        because that is where the literature is. They go nowhere else, and this site keeps no record of them.</li>
+      <li>Your <b>search terms are sent</b> to whichever database you are searching, because that
+        is where the literature is. This site keeps no record of them.</li>
       <li>No analytics, no advertising, no third-party tracking, no cookies of our own.</li>
+    </ul>
+    <p>Everything your browser contacts while you use this site:</p>
+    <ul>
+      <li><a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a> receives your
+        search terms on the Medicine tab.</li>
+      <li><a href="https://openalex.org" target="_blank" rel="noopener">OpenAlex</a> receives them on
+        the Psychology tab, and whenever you ask for similar papers.</li>
+      <li><a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>
+        receives them on the Trials tab.</li>
+      <li><b>Google Fonts</b> serves the typefaces, so it sees your IP address on every page load.</li>
+      <li><b>unpkg</b>, or <b>jsDelivr</b> as a fallback, serves the library that builds Word files.
+        It is fetched only when you export, never on a search.</li>
     </ul>
 
     <h2>With an account</h2>
