@@ -418,6 +418,11 @@ function classify(r){
   }
   if (has("case reports"))       return {design:"Case report",     tier:"case", src:"metadata"};
   if (has("observational study")) return {design:"Observational study", tier:"cohort", src:"metadata"};
+  /* Every indexed type is checked before any keyword guess. A record Europe PMC types as a
+     review must never come back as a trial because its abstract mentions randomisation. */
+  if (has("review","review-article")) return {design:"Review", tier:"narrative", src:"metadata"};
+  if (has("editorial","comment","letter","news","published erratum"))
+                                 return {design:"Comment", tier:"narrative", src:"metadata"};
 
   /* No design in the metadata — read the abstract instead. */
   const humanTrial = re(/randomly assigned|randomised|randomized|placebo-controlled|double-blind|participants were/);
@@ -434,9 +439,6 @@ function classify(r){
                              return {design:"Case report",      tier:"case",   src:"inferred"};
   if (re(/simulation|mathematical model|computational model|in silico/))
                              return {design:"Modelling",        tier:"preclinical", src:"inferred"};
-  if (has("review","review-article")) return {design:"Review",  tier:"narrative", src:"metadata"};
-  if (has("editorial","comment","letter","news","published erratum"))
-                             return {design:"Comment",          tier:"narrative", src:"metadata"};
   if (re(/this review|we review|this article reviews|overview of/))
                              return {design:"Review",           tier:"narrative", src:"inferred"};
   return {design:"Design unclear", tier:"narrative", src:"inferred"};
