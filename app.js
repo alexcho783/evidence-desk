@@ -591,14 +591,14 @@ function normalisePsy(w){
   };
 }
 
-async function fetchOpenAlex(cursor){
+async function fetchOpenAlex(cursor, signal){
   const p = new URLSearchParams();
   const doiHit = String(S.q).match(/\b(10\.\d{4,9}\/[^\s"<>]+)/);
   if (doiHit) {
     /* A DOI lookup should not be narrowed to one field, or it finds nothing. */
     const u = new URLSearchParams({filter: "doi:" + doiHit[1].replace(/[.,;)\]]+$/, ""), "per-page": "1"});
-    const r = await fetch(OPENALEX + "?" + u.toString(), {headers:{Accept:"application/json"}})
-      .catch(() => { throw {kind:"network"}; });
+    const r = await fetch(OPENALEX + "?" + u.toString(), {headers:{Accept:"application/json"}, signal})
+      .catch(e => { if (aborted(e)) throw e; throw {kind:"network"}; });
     if (!r.ok) throw {kind:"server", status:r.status};
     const dd = await r.json().catch(() => { throw {kind:"parse"}; });
     return {rows:(dd.results || []).map(normalisePsy), hitCount:(dd.meta || {}).count || 0, next:null};
@@ -616,8 +616,8 @@ async function fetchOpenAlex(cursor){
   else if (S.sort === "cited") p.set("sort", "cited_by_count:desc");
 
   let res;
-  try { res = await fetch(OPENALEX + "?" + p.toString(), {headers:{Accept:"application/json"}}); }
-  catch (e) { throw {kind: navigator.onLine === false ? "offline" : "network"}; }
+  try { res = await fetch(OPENALEX + "?" + p.toString(), {headers:{Accept:"application/json"}, signal}); }
+  catch (e) { if (aborted(e)) throw e; throw {kind: navigator.onLine === false ? "offline" : "network"}; }
   if (res.status === 400 || res.status === 403) throw {kind:"badquery"};
   if (res.status === 429) throw {kind:"rate"};
   if (!res.ok) throw {kind:"server", status:res.status};
@@ -683,7 +683,7 @@ function normaliseTrial(st){
   };
 }
 
-async function fetchTrials(cursor){
+async function fetchTrials(cursor, signal){
   const p = new URLSearchParams();
   p.set("query.term", S.q.trim());
   p.set("pageSize", String(PAGE));
@@ -693,8 +693,8 @@ async function fetchTrials(cursor){
   if (cursor && cursor !== "*") p.set("pageToken", cursor);
 
   let res;
-  try { res = await fetch(CTGOV + "?" + p.toString(), {headers:{Accept:"application/json"}}); }
-  catch (e) { throw {kind: navigator.onLine === false ? "offline" : "network"}; }
+  try { res = await fetch(CTGOV + "?" + p.toString(), {headers:{Accept:"application/json"}, signal}); }
+  catch (e) { if (aborted(e)) throw e; throw {kind: navigator.onLine === false ? "offline" : "network"}; }
   if (res.status === 400) throw {kind:"badquery"};
   if (res.status === 429) throw {kind:"rate"};
   if (!res.ok) throw {kind:"server", status:res.status};
@@ -795,9 +795,9 @@ function normalise(r){
   };
 }
 
-async function fetchPage(cursor){
-  if (S.source === "psy")    return fetchOpenAlex(cursor);
-  if (S.source === "trials") return fetchTrials(cursor);
+async function fetchPage(cursor, signal){
+  if (S.source === "psy")    return fetchOpenAlex(cursor, signal);
+  if (S.source === "trials") return fetchTrials(cursor, signal);
   const p = new URLSearchParams({
     query: buildQuery(),
     format: "json",
@@ -810,8 +810,9 @@ async function fetchPage(cursor){
 
   let res;
   try {
-    res = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}});
+    res = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}, signal});
   } catch (e) {
+    if (aborted(e)) throw e;
     throw {kind: navigator.onLine === false ? "offline" : "network"};
   }
   if (res.status === 400) throw {kind:"badquery"};
@@ -828,27 +829,46 @@ async function fetchPage(cursor){
 
 /* ══ Search flow ═══════════════════════════════════════════ */
 
+/* Only the newest search may write to the state. `seq` numbers every search; a reply
+   whose number is no longer current is dropped, and `inflight` lets a new search abort
+   the request still on the wire rather than waiting for it. Without both, a slow first
+   search can land after a fast second one and overwrite it. */
+let seq = 0;
+let inflight = null;
+const aborted = e => !!e && (e.name === "AbortError" || e.kind === "abort");
+
 async function runSearch(q, opts){
   const keepUrl = opts && opts.keepUrl;
   S.chainLabel = (opts && opts.chain) || "";
   q = (q || "").trim();
-  if (!q || S.busy) return;
+  if (!q) return;
+
+  /* A newer search replaces the one in flight rather than being dropped, so changing a
+     filter or retyping mid-search takes effect instead of being silently ignored. */
+  if (inflight) inflight.abort();
+  const ctrl = (inflight = new AbortController());
+  const mine = ++seq;
+
   S.q = q; S.lastQ = q;
-  S.busy = true; S.err = null; S.results = []; S.hitCount = 0;
+  S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = false;
   go("search", {silent:true});
   render();
 
   try {
-    const r = await fetchPage("*");
+    const r = await fetchPage("*", ctrl.signal);
+    if (mine !== seq) return;
     S.results = r.rows;
     S.hitCount = r.hitCount;
     S.cursor = r.next;
     S.exhausted = !r.next || r.rows.length < PAGE;
     addRecent(q);
   } catch (e) {
+    if (mine !== seq || aborted(e)) return;
     S.err = e && e.kind ? e : {kind:"network"};
   }
+  if (mine !== seq) return;
+  inflight = null;
   S.busy = false;
   if (!keepUrl) pushUrl();
   render();
@@ -858,8 +878,11 @@ async function runSearch(q, opts){
    reached by its DOI. Two round trips: the work itself, then its neighbours in one batch. */
 async function similarTo(paper){
   const label = paper.title || "this paper";
+  if (inflight) inflight.abort();
+  const ctrl = (inflight = new AbortController());
+  const mine = ++seq;
   S.open = null; S.confirmDel = false;
-  S.busy = true; S.err = null; S.results = []; S.hitCount = 0;
+  S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = true;
   S.chainLabel = `papers similar to ${label}`;
   go("search", {silent:true});
@@ -868,38 +891,51 @@ async function similarTo(paper){
     const base = paper.openalexId
       ? "https://api.openalex.org/works/" + encodeURIComponent(paper.openalexId)
       : "https://api.openalex.org/works/doi:" + encodeURIComponent(paper.doi);
-    const w = await fetch(base, {headers:{Accept:"application/json"}}).then(r => {
+    const w = await fetch(base, {headers:{Accept:"application/json"}, signal:ctrl.signal}).then(r => {
       if (r.status === 404) throw {kind:"notfound"};
       if (!r.ok) throw {kind:"server", status:r.status};
       return r.json();
     });
     const ids = (w.related_works || []).map(u => String(u).split("/").pop()).filter(Boolean).slice(0, 20);
-    if (!ids.length) { S.busy = false; S.err = {kind:"empty"}; render(); return; }
+    if (mine !== seq) return;
+    if (!ids.length) { inflight = null; S.busy = false; S.err = {kind:"empty"}; render(); return; }
     const q = new URLSearchParams({filter: "openalex_id:" + ids.join("|"), "per-page": String(ids.length)});
-    const d = await fetch("https://api.openalex.org/works?" + q.toString(), {headers:{Accept:"application/json"}})
+    const d = await fetch("https://api.openalex.org/works?" + q.toString(), {headers:{Accept:"application/json"}, signal:ctrl.signal})
       .then(r => { if (!r.ok) throw {kind:"server", status:r.status}; return r.json(); });
+    if (mine !== seq) return;
     S.results = (d.results || []).map(normalisePsy);
     S.hitCount = S.results.length;
   } catch (e) {
+    if (mine !== seq || aborted(e)) return;
     S.err = (e && e.kind) ? e : {kind:"network"};
   }
+  if (mine !== seq) return;
+  inflight = null;
   S.busy = false;
   render();
 }
 
 async function loadMore(){
   if (S.loadingMore || S.exhausted || !S.cursor) return;
+  /* Registers as the request in flight without taking a new number, so a search started
+     meanwhile aborts this page and its rows are never appended to the new results. */
+  const ctrl = (inflight = new AbortController());
+  const mine = seq;
   S.loadingMore = true; render();
   try {
-    const r = await fetchPage(S.cursor);
+    const r = await fetchPage(S.cursor, ctrl.signal);
+    if (mine !== seq) return;
     const seen = new Set(S.results.map(x => x.id));
     S.results = S.results.concat(r.rows.filter(x => !seen.has(x.id)));
     S.cursor = r.next;
     S.exhausted = !r.next || r.rows.length < PAGE;
   } catch (e) {
+    if (mine !== seq || aborted(e)) return;
     toast("Couldn't load more results.");
     S.exhausted = true;
   }
+  if (mine !== seq) return;
+  inflight = null;
   S.loadingMore = false; render();
 }
 
@@ -1097,7 +1133,7 @@ function renderSearch(){
     <div class="bigfield">
       <label class="sr" for="q">Your search</label>
       <textarea id="q" rows="2" placeholder="${esc(src().placeholder)}" autocomplete="off" enterkeyhint="search">${esc(S.q)}</textarea>
-      <button class="btn-go" type="submit" ${S.busy ? "disabled" : ""}>${S.busy ? "Searching" : "Search"}</button>
+      <button class="btn-go" type="submit" aria-busy="${S.busy ? "true" : "false"}">${S.busy ? "Searching" : "Search"}</button>
     </div>
     <div class="filters">
       <div class="seg" role="group" aria-label="Which literature to search">
