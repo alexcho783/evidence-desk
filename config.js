@@ -17,10 +17,10 @@
  */
 window.ED_CONFIG = {
   // From your Supabase project: Settings → API → Project URL
-  supabaseUrl: "",
+  supabaseUrl: "https://mrsfkaeklaaduzxpnxdh.supabase.co",
 
   // From your Supabase project: Settings → API → Project API keys → anon / public
-  supabaseAnonKey: "",
+  supabaseAnonKey: "sb_publishable_2wHbIuvutWFcaI4clK18yg_w6jQvrsA",
 
   // Show a "Continue with Google" button. Requires Google to be enabled under
   // Authentication → Providers in Supabase. Email links work without this.

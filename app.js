@@ -948,9 +948,7 @@ function renderPrivacy(){
       : `<p><button class="btn btn-danger" id="wipe-ask" type="button">${svg("i-trash")}Delete my account and data</button></p>`)
       : `<p style="color:var(--faint)">Sign in to see the account deletion option.</p>`}
     ${contact ? `<p>You can also ask for a copy of your data, or have it deleted, by emailing
-      <a href="mailto:${esc(contact)}">${esc(contact)}</a>.</p>`
-      : `<p>If you are running this site yourself, set <code>contactEmail</code> in <code>config.js</code>
-         so people have somewhere to write.</p>`}
+      <a href="mailto:${esc(contact)}">${esc(contact)}</a>.</p>` : ""}
     ` : `<p>Clear the reading list from the reading list page, or clear this site's data in your
       browser settings. There is nothing stored elsewhere to delete.</p>`}
 

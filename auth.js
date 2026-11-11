@@ -13,7 +13,8 @@
 
 const CFG = window.ED_CONFIG || {};
 const enabled = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
-const SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
+/* 2.118.0 or later: earlier releases predate Supabase's sb_publishable_ key format. */
+const SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js";
 
 let client = null;
 let session = null;
