@@ -26,7 +26,9 @@ const STYLES = [
 
 /* ── helpers ─────────────────────────────────────────── */
 
-const clean = s => String(s == null ? "" : s).trim().replace(/\s+/g, " ");
+/* Records saved before titles were stripped can still hold markup, so strip here too. */
+const noTags = s => String(s == null ? "" : s).replace(/<[^>]+>/g, "");
+const clean = s => noTags(s).trim().replace(/\s+/g, " ");
 const stripDot = s => clean(s).replace(/\.$/, "");
 
 /* Saved records hold a structured author list where the source gave one. Older records,

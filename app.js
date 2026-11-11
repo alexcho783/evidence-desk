@@ -140,6 +140,17 @@ const svg = id => `<svg aria-hidden="true"><use href="#${id}"/></svg>`;
 /* Europe PMC stores HTML entities in titles and abstracts ("Prevention &amp; Rehabilitation").
    Decode once on the way in; everything is escaped again on the way out. A detached textarea
    parses its contents as raw text, so nothing here can execute. */
+/* Europe PMC and OpenAlex both put markup inside titles and abstracts, for example
+   <i>PMP22</i> for a gene name. esc() stops it executing, so it was being shown as
+   literal angle brackets instead. Strip the tags once, on the way in. */
+const PARSER = new DOMParser();
+function plain(v){
+  const t = String(v == null ? "" : v);
+  if (t.indexOf("<") === -1) return t;
+  try { return PARSER.parseFromString(t, "text/html").body.textContent || ""; }
+  catch (e) { return t.replace(/<[^>]+>/g, ""); }
+}
+
 const DECODER = document.createElement("textarea");
 function dec(s){
   if (!s) return "";
@@ -533,7 +544,7 @@ function classifyPsy(title, abstract, type){
 
 function normalisePsy(w){
   const abstract = fromInverted(w.abstract_inverted_index);
-  const title = String(w.display_name || w.title || "Untitled").replace(/\.$/, "");
+  const title = plain(String(w.display_name || w.title || "Untitled")).replace(/\.$/, "");
   const c = classifyPsy(title, abstract, w.type);
   const srcInfo = (w.primary_location && w.primary_location.source) || {};
   const doi = typeof w.doi === "string" ? w.doi.replace(/^https?:\/\/doi\.org\//, "") : "";
@@ -650,7 +661,7 @@ function normaliseTrial(st){
 
   return {
     id: "CT:" + nct,
-    title: idm.briefTitle || idm.officialTitle || "Untitled",
+    title: plain(idm.briefTitle || idm.officialTitle || "Untitled"),
     authors: ((p.sponsorCollaboratorsModule || {}).leadSponsor || {}).name || "",
     journal: "", year,
     doi: "", pmid: "",
@@ -722,7 +733,7 @@ function buildQuery(){
 }
 
 function normalise(r){
-  r = {...r, title: dec(r.title), abstractText: dec(r.abstractText)};
+  r = {...r, title: plain(dec(r.title)), abstractText: dec(r.abstractText)};
   const ptypes = new Set((((r.pubTypeList || {}).pubType) || []).map(t => String(t).toLowerCase()));
   const cc = ((((r.commentCorrectionList || {}).commentCorrection) || [])
     .map(x => String(x.type || "").toLowerCase()));
