@@ -425,10 +425,14 @@ function classify(r){
                                  return {design:"Comment", tier:"narrative", src:"metadata"};
 
   /* No design in the metadata — read the abstract instead. */
-  const humanTrial = re(/randomly assigned|randomised|randomized|placebo-controlled|double-blind|participants were/);
+  /* "randomised" on its own appears in any paper that discusses trials, and "participants
+     were" appears in almost every human study. Both matched far too much. */
+  const humanTrial = re(/\b(were|was) randomi[sz]ed|randomly (assigned|allocated)|randomi[sz]ed to|(double|single|triple)-blind|placebo-controlled|open-label,? randomi[sz]ed|phase (ii|iii|2|3) trial/);
+  /* Text that talks about trials without being one. */
+  const aboutTrials = re(/target trial emulation|propensity[- ]score|retrospective|real-world|compared with randomi[sz]ed trials|pooled analysis of/);
   const animal = re(/\bmice\b|\bmouse\b|murine|\brats?\b|in vitro|cell lines?|ipsc|non-human primate|macaca|zebrafish|knockout|transgenic|preclinical|organoid/);
   if (animal && !humanTrial) return {design: re(/in vitro|cell lines?|ipsc|organoid/) ? "In vitro" : "Animal study", tier:"preclinical", src:"inferred"};
-  if (humanTrial)            return {design:"Trial",            tier:"trial",  src:"inferred"};
+  if (humanTrial && !aboutTrials) return {design:"Trial",       tier:"trial",  src:"inferred"};
   if (re(/\bcohort\b|prospectively followed|longitudinal|years of follow-up/))
                              return {design:"Cohort study",     tier:"cohort", src:"inferred"};
   if (re(/case-control|case–control/))
