@@ -381,6 +381,11 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .chip[data-k="oa"]{background:var(--strong-soft); color:var(--strong)}
 .chip[data-k="posted"]{background:var(--strong-soft); color:var(--strong)}
 .chip[data-k="unposted"]{background:var(--weak-soft); color:var(--weak)}
+.chip[data-k="retracted"]{background:var(--weak); color:#fff; font-weight:700}
+.chip[data-k="retracted"] svg{width:11px; height:11px}
+.chip[data-k="preprint"]{background:var(--mid-soft); color:var(--mid)}
+.card[data-retracted="1"]{border-color:color-mix(in srgb, var(--weak) 55%, var(--line))}
+.card[data-retracted="1"] .card-title{text-decoration:line-through; text-decoration-thickness:1px}
 .chip[data-k="n"]{font-family:var(--f-data); font-weight:500}
 .chip[data-k="tag"]{background:var(--accent-soft); color:var(--accent-ink)}
 .chip-inf{opacity:.75; font-weight:500; font-style:italic}

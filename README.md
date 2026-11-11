@@ -135,6 +135,33 @@ It also does not score quality within a tier, does not know whether a paper supp
 contradicts the question, and is not a systematic-review tool. The in-app **How it ranks** page
 states all of this to visitors.
 
+## Integrity flags
+
+Two signals were arriving in every Europe PMC response and being thrown away.
+
+**Retractions.** `pubTypeList` carries `Retracted Publication`, and `commentCorrectionList`
+carries `Retraction in` / `Expression of concern` / `Erratum in`. OpenAlex has its own
+`is_retracted`. A retracted paper is now struck through on its card, flagged red, warned about
+on the reading list, and marked **[RETRACTED]** in bold red in any exported bibliography, with a
+second warning in the document footer. Citing a retracted paper is the kind of mistake a student
+makes once and remembers forever; this makes it hard to make silently.
+
+**Preprints.** `source: "PPR"` / `pubTypes: ['Preprint']`. Not peer reviewed, which is exactly
+the distinction this site exists to draw, and previously indistinguishable from a trial on a
+card. Exports append "Preprint, not peer reviewed."
+
+## Citation chaining
+
+The sheet for any Europe PMC paper offers **Papers citing this**, which runs
+`CITES:<id>_<source>` as an ordinary search. Because that query returns full `core` records,
+the citing papers arrive with publication types and classify normally — same plot, same rows,
+same saving. A banner says whose citations are showing, with a way back.
+
+The other direction is deliberately absent. `/{source}/{id}/references` returns only the
+references Europe PMC has parsed — 10 of roughly 40 for a NEJM paper — with no publication
+types, so it would be both incomplete and unrankable. A half-empty reference list presented as
+a whole one is worse than no feature.
+
 ## Collections and references
 
 A saved paper can belong to any number of named collections, and a collection exports as a

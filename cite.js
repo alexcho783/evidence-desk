@@ -114,7 +114,18 @@ function trialRef(p, style){
   return runs;
 }
 
+/* Wraps the style formatters so an integrity marker rides along into the document.
+   A retracted paper that exports looking like any other reference is the exact failure
+   this flag exists to prevent, so the marker is loud and leads the entry. */
 function format(p, style){
+  const runs = formatBase(p, style);
+  if (p.retracted) return [{t:"[RETRACTED] ", warn:true}, ...runs];
+  if (p.concern)   return [{t:"[EXPRESSION OF CONCERN] ", warn:true}, ...runs];
+  if (p.preprint)  return [...runs, {t:" Preprint, not peer reviewed."}];
+  return runs;
+}
+
+function formatBase(p, style){
   if (p.source === "trials") return trialRef(p, style);
 
   const list = authors(p);
@@ -217,7 +228,10 @@ async function toDocxBlob(name, rows, styleKey){
     const runs = format(p, style.k);
     const bits = [];
     if (style.numbered) bits.push(new d.TextRun({text: `${i + 1}. `}));
-    for (const r of runs) bits.push(new d.TextRun({text: r.t, italics: !!r.i}));
+    for (const r of runs) bits.push(new d.TextRun({
+      text: r.t, italics: !!r.i,
+      ...(r.warn ? {bold: true, color: "B3261E"} : {})
+    }));
     children.push(new d.Paragraph({
       children: bits,
       spacing: {after: 160, line: 360},
@@ -226,6 +240,16 @@ async function toDocxBlob(name, rows, styleKey){
     }));
   });
 
+  const flagged = sorted.filter(p => p.retracted || p.concern).length;
+  if (flagged) {
+    children.push(new d.Paragraph({
+      children: [new d.TextRun({
+        text: `Warning: ${flagged} of these ${flagged === 1 ? "references has" : "references have"} been retracted or had an expression of concern raised. Remove ${flagged === 1 ? "it" : "them"} before submitting.`,
+        bold: true, color: "B3261E", size: 20
+      })],
+      spacing: {before: 300}
+    }));
+  }
   children.push(new d.Paragraph({
     children: [new d.TextRun({
       text: `${sorted.length} reference${sorted.length === 1 ? "" : "s"} · ${style.label} · exported from Evidence Desk. Check every reference before submitting.`,

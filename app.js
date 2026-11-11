@@ -114,8 +114,9 @@ const S = {
   view:"search",
   q:"", lastQ:"",
   source:"med",
-  plotOpen:false,
-  coll:"all", citeStyle:"vancouver", exporting:false, renaming:false, confirmColl:false,   /* mobile only: the full grid is collapsed until asked for */
+  plotOpen:false,   /* mobile only: the full grid is collapsed until asked for */
+  coll:"all", citeStyle:"vancouver", exporting:false, renaming:false, confirmColl:false,
+  chainLabel:"",    /* set while showing the papers that cite a given paper */
   design:"any", sort:"relevance", openOnly:false, yearFrom:"", yearTo:"",
   busy:false, loadingMore:false,
   results:[], hitCount:0, cursor:"*", exhausted:false,
@@ -518,6 +519,9 @@ function normalisePsy(w){
     epmc: w.id || "",
     fullText: ((w.best_oa_location || {}).landing_page_url) || "",
     source: "psy",
+    retracted: !!w.is_retracted,
+    concern: false, erratum: false,
+    preprint: w.type === "preprint",
     journalAbbrev: "",
     volume: ((w.biblio || {}).volume) || "",
     issue: ((w.biblio || {}).issue) || "",
@@ -654,6 +658,9 @@ function buildQuery(){
 
 function normalise(r){
   r = {...r, title: dec(r.title), abstractText: dec(r.abstractText)};
+  const ptypes = new Set((((r.pubTypeList || {}).pubType) || []).map(t => String(t).toLowerCase()));
+  const cc = ((((r.commentCorrectionList || {}).commentCorrection) || [])
+    .map(x => String(x.type || "").toLowerCase()));
   const c = classify(r);
   const year = r.pubYear ? parseInt(r.pubYear, 10) : null;
   const authors = dec(r.authorString || "");
@@ -679,6 +686,15 @@ function normalise(r){
     epmc: "https://europepmc.org/article/" + (r.source || "MED") + "/" + (r.id || ""),
     fullText: ft.length ? ft[0].url : "",
     source: "med",
+    /* Integrity signals. These have been in every response all along; the site simply
+       never showed them. A retracted paper is the sharpest possible answer to "what
+       kind of paper is this", and a preprint has not been peer reviewed at all. */
+    retracted: ptypes.has("retracted publication") || cc.some(t => t.startsWith("retraction in")),
+    concern: cc.some(t => t.includes("expression of concern")),
+    erratum: cc.some(t => t.startsWith("erratum in") || t.startsWith("correction in")),
+    preprint: ptypes.has("preprint") || r.source === "PPR",
+    epmcId: r.id || "",
+    epmcSource: r.source || "MED",
     /* Needed to build a real reference, not just to display a card. */
     journalAbbrev: dec((r.journalInfo && r.journalInfo.journal && r.journalInfo.journal.isoabbreviation) || ""),
     volume: (r.journalInfo && r.journalInfo.volume) || "",
@@ -727,6 +743,7 @@ async function fetchPage(cursor){
 
 async function runSearch(q, opts){
   const keepUrl = opts && opts.keepUrl;
+  S.chainLabel = (opts && opts.chain) || "";
   q = (q || "").trim();
   if (!q || S.busy) return;
   S.q = q; S.lastQ = q;
@@ -810,6 +827,10 @@ function readUrl(){
 
 function chips(p){
   const c = [`<span class="chip" data-k="tier">${esc(p.design)}${p.designSrc === "inferred" ? ` <span class="chip-inf">inferred</span>` : ""}</span>`];
+  if (p.retracted) c.push(`<span class="chip" data-k="retracted">${svg("i-alert")}Retracted</span>`);
+  else if (p.concern) c.push(`<span class="chip" data-k="unposted">Expression of concern</span>`);
+  if (p.erratum && !p.retracted) c.push(`<span class="chip">Corrected</span>`);
+  if (p.preprint) c.push(`<span class="chip" data-k="preprint">Preprint · not peer reviewed</span>`);
   if (p.source === "trials") {
     c.push(`<span class="chip">${esc(p.trialStatus || "Status unknown")}</span>`);
     /* The whole reason this source exists: a finished trial that never reported. */
@@ -836,7 +857,7 @@ function card(p, idx){
   const saved = S.list.has(p.id);
   const w = tierMeta(p.tier).w || "weak";
   const snip = p.abstract ? p.abstract.slice(0, 190).trim() + (p.abstract.length > 190 ? "…" : "") : "";
-  return `<article class="card" id="card-${esc(p.id)}">
+  return `<article class="card"${p.retracted ? ' data-retracted="1"' : ""} id="card-${esc(p.id)}">
     <div class="rail" data-w="${w}" aria-hidden="true"></div>
     <div class="card-body">
       <button class="card-title" data-open="${esc(p.id)}">${idx != null ? `<span class="mono" style="color:var(--faint)">${idx}.</span> ` : ""}${esc(p.title)}</button>
@@ -990,8 +1011,11 @@ function renderSearch(){
   let results = "";
   if (S.results.length) {
     const strong = S.results.filter(p => tierMeta(p.tier).w === "strong").length;
-    results = `<div class="list-head">
-        <span class="list-h">Results</span>
+    results = `${S.chainLabel ? `<div class="banner">${svg("i-link")}
+        <span class="grow">Showing papers that cite <b>${esc(S.chainLabel.slice(0, 90))}</b></span>
+        <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
+      <div class="list-head">
+        <span class="list-h">${S.chainLabel ? "Citing papers" : "Results"}</span>
         <span class="list-n">${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above</span>
         <span style="flex:1"></span>
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
@@ -1057,6 +1081,13 @@ function renderList(){
   if (!all.length) {
     $("view-list").innerHTML = `<div class="eyebrow">Reading list</div>
       ${syncBanner()}
+    ${(() => {
+      const bad = all.filter(x => x.retracted);
+      if (!bad.length) return "";
+      return `<div class="notice notice-bad">${svg("i-alert")}<div><b>${bad.length} saved paper${bad.length === 1 ? " has" : "s have"} been retracted.</b>
+        A retracted paper should not be cited as evidence. ${bad.length === 1 ? "It is" : "They are"} struck through below,
+        and marked in anything you export.</div></div>`;
+    })()}
       <div class="empty">${svg("i-books")}<h3>Nothing saved yet</h3>
       <p>Save a paper from any search and it is kept with its study design and your own note.${
         accounts ? " Signed out, that means this browser only." : " It stays in this browser; clearing your browser data clears this."}</p>
@@ -1218,6 +1249,10 @@ function renderSheet(){
       <h3 class="sheet-title">${esc(p.title)}</h3>
       ${p.authors ? `<p class="sheet-authors">${esc(p.authors)}</p>` : ""}
       <dl class="kv">${kv.join("")}</dl>
+      ${p.epmcId ? `<div style="margin-top:14px">
+        <button class="btn btn-sm" type="button" data-cited="${esc(p.epmcSource || "MED")}:${esc(p.epmcId)}">
+          ${svg("i-search")}Papers citing this</button>
+      </div>` : ""}
       ${saved ? `
         <div class="sh-head">Collections</div>
         <div class="chips">${(p.collections || []).length
@@ -1444,6 +1479,7 @@ function home(){
   S.design = "any"; S.sort = "relevance"; S.openOnly = false;
   S.yearFrom = ""; S.yearTo = "";
   S.filter = ""; S.open = null; S.confirmDel = false; S.confirmClear = false;
+  S.chainLabel = "";
   S.view = "search";
   history.pushState({}, "", location.pathname);
   $("scroll").scrollTop = 0;
@@ -1524,7 +1560,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-cited],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
@@ -1550,6 +1586,15 @@ document.addEventListener("click", (ev) => {
   if (t.id === "coll-del-no")  { S.confirmColl = false; render(); return; }
   if (t.id === "coll-del-yes") { deleteColl(S.coll); S.confirmColl = false; return; }
   if (t.id === "export-docx")  { exportDocx(); return; }
+  if (t.dataset.cited) {
+    const [srcCode, id] = t.dataset.cited.split(":");
+    const label = (S.open && S.open.title) || "this paper";
+    S.open = null; S.confirmDel = false;
+    S.source = "med";
+    S.q = `CITES:${id}_${srcCode}`;
+    runSearch(S.q, {chain: label});
+    return;
+  }
   if (t.dataset.src) {
     if (S.source === t.dataset.src) return;
     S.source = t.dataset.src;
