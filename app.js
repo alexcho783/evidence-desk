@@ -214,7 +214,8 @@ const EXAMPLES = [
 ];
 
 const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections",
-            counts:"ed-counts", integrity:"ed-integrity", tablecols:"ed-table-cols"};
+            counts:"ed-counts", integrity:"ed-integrity", tablecols:"ed-table-cols",
+            plotview:"ed-plot-view"};
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -240,6 +241,7 @@ const S = {
   tableCols:["design","n","note"],   /* which evidence table columns to export */
   colPicker:false,
   guideMenu:false,
+  plotView:"grid",   /* grid, or an exact-year timeline */
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -339,6 +341,7 @@ function loadList(){
      behind by those versions before reading the session-scoped copy. */
   try { localStorage.removeItem(LS.recent); } catch(e){}
   S.recent = sessionStore(LS.recent) || [];
+  if (store(LS.plotview) === "time") S.plotView = "time";
   const savedCols = store(LS.tablecols);
   if (Array.isArray(savedCols) && savedCols.length) S.tableCols = savedCols;
 }
@@ -1638,6 +1641,69 @@ function card(p, idx){
   </article>`;
 }
 
+/* N6. The three era columns answer "is this current?" but hide the story a timeline tells:
+ * when the trials arrived, how long the first synthesis took to follow, whether anything
+ * recent contradicts it.
+ *
+ * The dots are the papers listed below, at their exact year. The shading behind each row is
+ * the indexed total for that era, the same figure the grid prints, so the two views cannot
+ * disagree. Per-year indexed counts would be better and are not available: Europe PMC has
+ * no facet parameter, and asking year by year costs one request per year per row, which
+ * measured 62 seconds for two rows over 22 years.
+ */
+function timeline(rows){
+  const placed = rows.filter(p => !!p.year);
+  if (!placed.length) return "";
+  const ladder = tiers();
+  const extra = [...new Set(placed.map(x => x.tier))]
+    .filter(k => TIER[k] && !ladder.some(t => t.k === k))
+    .sort((a, b) => TIER[a].rank - TIER[b].rank).map(k => ({k, ...TIER[k]}));
+  const idx = S.indexed.data;
+  const hasCount = t => !!idx && TIER_TYPE[t.k] && ERA_COLS.some(c => (idx[t.k + "/" + c.k] || 0) > 0);
+  const used = ladder.concat(extra).filter(t => placed.some(x => x.tier === t.k) || hasCount(t));
+  const rowsT = used.length ? used : ladder.slice(0, 3);
+
+  const years = placed.map(p => p.year);
+  const lo = Math.min(...years), hi = Math.max(...years, Y);
+  const span = Math.max(1, hi - lo);
+  const at = y => ((y - lo) / span) * 100;
+
+  /* The widest era count sets the scale, so shading is comparable across rows. */
+  const peak = idx ? Math.max(1, ...rowsT.flatMap(t => ERA_COLS.map(c => idx[t.k + "/" + c.k] || 0))) : 0;
+
+  const ticks = [];
+  const step = span <= 12 ? 2 : span <= 30 ? 5 : 10;
+  for (let y = Math.ceil(lo / step) * step; y <= hi; y += step) ticks.push(y);
+
+  const body = rowsT.map(t => {
+    const mine = placed.filter(p => p.tier === t.k);
+    const bands = idx && TIER_TYPE[t.k] ? ERA_COLS.map(c => {
+      const n = idx[t.k + "/" + c.k] || 0;
+      if (!n) return "";
+      const from = Math.max(lo, c.qFrom), to = Math.min(hi, c.qTo);
+      if (to <= from) return "";
+      return `<span class="tl-band" style="left:${at(from)}%;width:${at(to) - at(from)}%;opacity:${(0.08 + 0.42 * (n / peak)).toFixed(3)}"
+        title="${esc(`${n.toLocaleString()} indexed ${(t.noun || ["record","records"])[n === 1 ? 0 : 1]} in ${c.label}`)}"></span>`;
+    }).join("") : "";
+    return `<div class="p-rowhead ${t.w === "strong" ? "p-row-strong" : "p-row-weak"}">
+        <b>${t.label}</b><span>${t.note}</span></div>
+      <div class="tl-track" data-w="${t.w}">${bands}${mine.map(p => {
+        const small = isSmall(p);
+        const lab = `${p.title.slice(0,70)} — ${p.design}, ${p.year}${p.n ? `, n = ${p.n}` : ""}${small ? ` (fewer than ${SMALL_N} participants)` : ""}`;
+        return `<button class="p-dot tl-dot" data-w="${t.w}" data-saved="${S.list.has(p.id) ? 1 : 0}"
+          ${small ? 'data-small="1"' : ""} style="left:${at(p.year)}%" data-jump="${esc(p.id)}"
+          title="${esc(lab)}" aria-label="${esc(lab)}"><i></i></button>`;
+      }).join("")}</div>`;
+  }).join("");
+
+  return `<div class="tl" role="img" aria-label="Papers by study design and exact publication year">
+    <div class="tl-grid">${body}
+      <div></div>
+      <div class="tl-axis">${ticks.map(y => `<span style="left:${at(y)}%">${y}</span>`).join("")}</div>
+    </div>
+  </div>`;
+}
+
 function plot(rows){
   const columns = cols();
   /* A row belongs on the grid if any column will take it — a missing year for the era
@@ -1734,17 +1800,25 @@ function plot(rows){
     <div class="plot-full">
     <div class="plot-head">
       <span class="plot-title">What kind of evidence answers this</span>
-      <button class="btn btn-sm btn-quiet" id="plot-png" type="button" style="margin-left:auto">${svg("i-down")}Image</button>
+      <span class="seg" role="group" aria-label="Grid or timeline" style="margin-left:auto">
+        <button type="button" data-view2="grid"${S.plotView === "grid" ? ' aria-pressed="true"' : ""}>Grid</button>
+        <button type="button" data-view2="time"${S.plotView === "time" ? ' aria-pressed="true"' : ""}>Timeline</button>
+      </span>
+      <button class="btn btn-sm btn-quiet" id="plot-png" type="button">${svg("i-down")}Image</button>
       <span class="plot-note">${placed.length} of ${rows.length} shown${undated ? ` · ${undated} undated` : ""}</span>
     </div>
-    <div class="plot" style="--cols:${colTracks}" role="img" aria-label="${S.source === 'trials' ? 'Trials arranged by phase and reporting status' : 'Papers arranged by study design strength and publication era'}">${g}</div>
+    ${S.plotView === "time" && S.source !== "trials"
+      ? timeline(rows)
+      : `<div class="plot" style="--cols:${colTracks}" role="img" aria-label="${S.source === 'trials' ? 'Trials arranged by phase and reporting status' : 'Papers arranged by study design strength and publication era'}">${g}</div>`}
     <div class="plot-legend">
       <span class="lg" data-w="strong"><i></i>Strong design</span>
       <span class="lg" data-w="mid"><i></i>Observational</span>
       <span class="lg" data-w="weak"><i></i>Weak or indirect</span>
       <span class="lg" data-w="saved"><i></i>Saved</span>
       <span class="lg" data-w="small"><i></i>Fewer than ${SMALL_N} participants</span>
-      <span style="color:var(--faint)">Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper.</span>
+      <span style="color:var(--faint)">${S.plotView === "time" && S.source !== "trials"
+        ? "Top rows carry most weight; each mark sits at the paper's own year, and the shading behind a row is how much the index holds in that era."
+        : "Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper."}</span>
       ${idx ? `<span class="lg" data-w="count"><i></i>Indexed total</span>` : ""}
       <span style="flex-basis:100%;color:var(--faint)">${idx
         ? `The numbers are how many records Europe PMC has indexed into each cell for this question, across the whole database. The marks are the ${S.results.length} papers listed below, which are only the first page by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}. The two are counted separately and never added together. Rows with no number have no publication type to count.`
@@ -2553,6 +2627,61 @@ function downloadBlob(name, blob){
 /* Drawn from the data rather than screenshotted from the page, so it is crisp at any size
    and needs no library. Colours are literal because CSS variables do not resolve inside an
    <img>, and a figure for a document wants the light palette anyway. */
+/* The exported image has to be the view you were looking at, or the file says something
+   the page did not. Same scales and same rules as timeline() above. */
+function timelineSvg(rows){
+  const placed = rows.filter(p => !!p.year);
+  if (!placed.length) return null;
+  const ladder = tiers();
+  const extra = [...new Set(placed.map(x => x.tier))]
+    .filter(k => TIER[k] && !ladder.some(t => t.k === k))
+    .sort((a, b) => TIER[a].rank - TIER[b].rank).map(k => ({k, ...TIER[k]}));
+  const idx = S.indexed.data;
+  const hasCount = t => !!idx && TIER_TYPE[t.k] && ERA_COLS.some(c => (idx[t.k + "/" + c.k] || 0) > 0);
+  const rowsT = ladder.concat(extra).filter(t => placed.some(x => x.tier === t.k) || hasCount(t));
+  if (!rowsT.length) return null;
+
+  const LAB = 150, TRACK = 640, RH = 44, TOP = 76, PAD = 24;
+  const W = LAB + TRACK + PAD * 2, H = TOP + RH * rowsT.length + 56;
+  const FILL = {strong:"#0F6B52", mid:"#8A5A00", weak:"#D9C9A8"};
+  const years = placed.map(p => p.year);
+  const lo = Math.min(...years), hi = Math.max(...years, Y), span = Math.max(1, hi - lo);
+  const x = y => PAD + LAB + ((y - lo) / span) * TRACK;
+  const peak = idx ? Math.max(1, ...rowsT.flatMap(t => ERA_COLS.map(c => idx[t.k + "/" + c.k] || 0))) : 0;
+
+  let o = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Inter, Helvetica, Arial, sans-serif">`;
+  o += `<rect width="${W}" height="${H}" fill="#ffffff"/>`;
+  o += `<text x="${PAD}" y="30" font-size="15" font-weight="600" fill="#101418">What kind of evidence answers this</text>`;
+  o += `<text x="${PAD}" y="50" font-size="11.5" fill="#5A6472">${esc(S.lastQ || "")}</text>`;
+
+  rowsT.forEach((t, ri) => {
+    const yTop = TOP + RH * ri, mid = yTop + RH / 2;
+    o += `<text x="${PAD}" y="${mid - 2}" font-size="12" font-weight="600" fill="#101418">${esc(t.label)}</text>`;
+    o += `<text x="${PAD}" y="${mid + 13}" font-size="10" fill="#8A94A3">${esc(t.note)}</text>`;
+    if (idx && TIER_TYPE[t.k]) for (const c of ERA_COLS) {
+      const n = idx[t.k + "/" + c.k] || 0;
+      if (!n) continue;
+      const from = Math.max(lo, c.qFrom), to = Math.min(hi, c.qTo);
+      if (to <= from) continue;
+      o += `<rect x="${x(from)}" y="${yTop + 6}" width="${x(to) - x(from)}" height="${RH - 12}" rx="3" `
+         + `fill="${FILL[t.w] || FILL.weak}" opacity="${(0.08 + 0.32 * (n / peak)).toFixed(3)}"/>`;
+    }
+    for (const p of placed.filter(p2 => p2.tier === t.k)) {
+      o += isSmall(p)
+        ? `<circle cx="${x(p.year)}" cy="${mid}" r="4.6" fill="#ffffff" stroke="${FILL[t.w] || FILL.weak}" stroke-width="1.5"/>`
+        : `<circle cx="${x(p.year)}" cy="${mid}" r="5.4" fill="${FILL[t.w] || FILL.weak}"/>`;
+    }
+    o += `<line x1="${PAD + LAB}" y1="${yTop + RH}" x2="${W - PAD}" y2="${yTop + RH}" stroke="#E6EBF1"/>`;
+  });
+
+  const step = span <= 12 ? 2 : span <= 30 ? 5 : 10;
+  for (let y = Math.ceil(lo / step) * step; y <= hi; y += step)
+    o += `<text x="${x(y)}" y="${TOP + RH * rowsT.length + 16}" font-size="10" fill="#8A94A3" text-anchor="middle">${y}</text>`;
+  o += `<text x="${PAD}" y="${H - 14}" font-size="10.5" fill="#8A94A3">marks are the ${rows.length} listed papers at their own year`
+     + `${idx ? "; shading is how much Europe PMC has indexed in each era" : ""} · Evidence Desk</text>`;
+  return o + `</svg>`;
+}
+
 function plotSvg(rows){
   const columns = cols();
   const placed = rows.filter(p => columns.some(c => c.test(p)));
@@ -2629,7 +2758,8 @@ function plotSvg(rows){
 
 async function exportPlotImage(){
   if (!S.results.length) { toast("Run a search first."); return; }
-  const svg = plotSvg(S.results);
+  const svg = (S.plotView === "time" && S.source !== "trials")
+    ? timelineSvg(S.results) : plotSvg(S.results);
   if (!svg) { toast("Nothing to draw for this search."); return; }
   const url = URL.createObjectURL(new Blob([svg], {type:"image/svg+xml;charset=utf-8"}));
   try {
@@ -2750,7 +2880,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -2766,6 +2896,7 @@ document.addEventListener("click", (ev) => {
   if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
   if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
   if (t.id === "guide-pick") { S.guideMenu = !S.guideMenu; render(); return; }
+  if (t.dataset.view2) { S.plotView = t.dataset.view2; store(LS.plotview, S.plotView); render(); return; }
   if (t.dataset.design) { S.guideMenu = false; S.design = t.dataset.design; runSearch(S.q || S.lastQ); return; }
   if (t.hasAttribute("data-cell")) {
     const [tier, colK] = t.dataset.cell.split("/");
