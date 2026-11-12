@@ -694,7 +694,10 @@ async function fetchTrials(cursor, signal){
   p.set("pageSize", String(PAGE));
   p.set("format", "json");
   p.set("countTotal", "true");
-  if (S.sort === "recent") p.set("sort", "StartDate:desc");
+  /* The registry's own default order is not relevance, and sending no sort got it:
+     NCT03036124 sat at rank 32 for "dapagliflozin heart failure", off the first screen.
+     Asking for @relevance brings it to 9. Pagination is unaffected. */
+  p.set("sort", S.sort === "recent" ? "StartDate:desc" : "@relevance");
   if (cursor && cursor !== "*") p.set("pageToken", cursor);
 
   let res;
