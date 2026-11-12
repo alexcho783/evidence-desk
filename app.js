@@ -94,7 +94,10 @@ const ERA_COLS = [
    no database of published papers can show you. */
 const TRIAL_COLS = [
   {k:"reported", label:"Reported",   sub:"Results posted",       test:p => p.trialResults === true},
-  {k:"silent",   label:"Unreported", sub:"Finished, no results", test:p => p.trialResults === false && p.trialDone === true},
+  /* "Unreported" was an accusation the data cannot support: a trial may have reported in a
+     journal without posting to the registry, and the duty to post covers only some trials.
+     This says what the registry shows and nothing more. */
+  {k:"silent",   label:"Nothing posted", sub:"Finished, no registry results", test:p => p.trialResults === false && p.trialDone === true},
   {k:"ongoing",  label:"Ongoing",    sub:"Still running",        test:p => p.trialDone === false}
 ];
 const cols = () => (S.source === "trials" ? TRIAL_COLS : ERA_COLS);
@@ -659,6 +662,7 @@ function normaliseTrial(st){
     fullText: "",
     source: "trials",
     nct,
+    primaryOutcome: (((p.outcomesModule || {}).primaryOutcomes || [])[0] || {}).measure || "",
     trialStatus: status ? status.replace(/_/g, " ").toLowerCase().replace(/^./, m => m.toUpperCase()) : "",
     trialResults: !!st.hasResults,
     trialDone: TRIAL_DONE.includes(status)
@@ -767,6 +771,9 @@ function normalise(r){
     concern: cc.some(t => t.includes("expression of concern")),
     erratum: cc.some(t => t.startsWith("erratum in") || t.startsWith("correction in")),
     preprint: ptypes.has("preprint") || r.source === "PPR",
+    /* A registration number in the abstract is how a paper points at its own trial, and
+       comparing the two is one of the quickest checks for selective reporting. */
+    nct: ((((r.title || "") + " " + (r.abstractText || "")).match(/\bNCT\d{8}\b/) || [])[0]) || "",
     epmcId: r.id || "",
     epmcSource: r.source || "MED",
     /* Who paid. Not a verdict, but it belongs beside a design label. */
@@ -1085,6 +1092,59 @@ async function citesOf(srcCode, id, label){
   inflight = null;
   S.busy = false;
   render();
+}
+
+/* ══ Trials and papers, joined up ════════════════════════════════════════════════════
+ *
+ * A paper carrying a registration number can be set beside what was registered, which is
+ * the quickest check there is for an outcome that changed between plan and publication.
+ * A trial can be set beside the papers that report it, and a completed trial with neither
+ * posted results nor a paper is the publication-bias signal the Trials tab exists for.
+ *
+ * Both directions are fetched only when a sheet opens, never for a list.
+ *
+ * ACCESSION_ID is the field that holds a registration number in Europe PMC, checked before
+ * being relied on: for NCT03036124 it returns 142 records against 162 for the same string
+ * in free text. Narrowing to indexed trials and sorting by citations puts the trial's own
+ * report first, which free text does not.
+ */
+const CTGOV_ONE = "https://clinicaltrials.gov/api/v2/studies/";
+const trialCache = new Map();
+const papersCache = new Map();
+
+async function fetchTrial(nct){
+  if (trialCache.has(nct)) return trialCache.get(nct);
+  trialCache.set(nct, null);
+  try {
+    const r = await fetch(CTGOV_ONE + encodeURIComponent(nct), {headers:{Accept:"application/json"}});
+    if (!r.ok) return null;
+    const st = await r.json();
+    const got = normaliseTrial(st);
+    trialCache.set(nct, got);
+    if (S.open && S.open.nct === nct) renderSheet();
+    return got;
+  } catch (e) { return null; }
+}
+
+async function findPapersForTrial(nct){
+  if (papersCache.has(nct)) return papersCache.get(nct);
+  papersCache.set(nct, null);
+  try {
+    const p = new URLSearchParams({
+      query: `ACCESSION_ID:"${nct}" AND (PUB_TYPE:"Randomized Controlled Trial" OR PUB_TYPE:"Clinical Trial")`,
+      format:"json", resultType:"core", pageSize:"3", sort:"CITED desc"
+    });
+    const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}});
+    if (!r.ok) return null;
+    const d = await r.json();
+    const got = {
+      rows: ((d.resultList && d.resultList.result) || []).map(normalise),
+      total: d.hitCount || 0
+    };
+    papersCache.set(nct, got);
+    if (S.open && S.open.nct === nct) renderSheet();
+    return got;
+  } catch (e) { return null; }
 }
 
 /* ══ Unpaywall: a legal free copy Europe PMC does not know about ═══════════════════════
@@ -2008,10 +2068,49 @@ function renderAbout(){
 
 /* ══ Sheet ═══════════════════════════════════════════ */
 
+/* What the two directions look like in the sheet. Both are deliberately plain: this shows
+   what was registered and leaves the comparison to the reader, because deciding that an
+   outcome "changed" is a judgement the registry data alone cannot support. */
+function trialBlock(p){
+  if (!p.nct) return "";
+
+  if (p.source === "trials") {
+    const got = papersCache.get(p.nct);
+    if (got === undefined || got === null) return "";
+    if (!got.rows.length) {
+      /* Wording matters here. A trial can report in a journal without posting results to
+         the registry, and the duty to post covers only some trials, so this says what was
+         looked for and found, never that anything was withheld. */
+      return `<div class="sh-head">Publications</div>
+        <p class="sh-note">${p.trialDone && !p.trialResults
+          ? "No results posted on the registry, and no indexed trial report found in Europe PMC carrying this registration number. That is not proof it went unpublished: a paper can omit its registration number, or sit outside Europe PMC."
+          : "No indexed trial report in Europe PMC carries this registration number yet."}</p>`;
+    }
+    return `<div class="sh-head">Published as${got.total > got.rows.length ? ` (${got.total} carry this registration)` : ""}</div>
+      ${got.rows.map(x => `<button class="pin-card" type="button" data-open="${esc(x.id)}">
+        <span class="pin-t">${esc(x.title)}</span>
+        <span class="pin-m">${esc(x.journal || "")}${x.year ? ` · <span class="num">${x.year}</span>` : ""} · ${esc(x.design)}</span>
+      </button>`).join("")}`;
+  }
+
+  const t = trialCache.get(p.nct);
+  const link = `<a href="https://clinicaltrials.gov/study/${esc(p.nct)}" target="_blank" rel="noopener" class="mono">${esc(p.nct)}</a>`;
+  if (t === undefined || t === null)
+    return `<div class="sh-head">Registration</div><p class="sh-note">Registered as ${link}.</p>`;
+  return `<div class="sh-head">Registration</div>
+    <p class="sh-note">Registered as ${link} · ${esc(t.trialStatus || "status unknown")}${
+      t.n ? ` · ${t.n.toLocaleString()} enrolled` : ""} · ${t.trialResults ? "results posted" : "no results posted on the registry"}.</p>
+    ${t.primaryOutcome ? `<p class="sh-note"><b>Primary outcome as registered:</b> ${esc(t.primaryOutcome)}</p>` : ""}`;
+}
+
 function renderSheet(){
   /* One request, only on opening a sheet. refCount() de-duplicates and fills the button
      in place when the answer arrives. */
   if (S.open && S.open.epmcId) refCount(S.open.epmcSource || "MED", S.open.epmcId);
+  if (S.open && S.open.nct) {
+    if (S.open.source === "trials") findPapersForTrial(S.open.nct);
+    else fetchTrial(S.open.nct);
+  }
   if (S.open && !S.open.unpaywall) {
     const hit = S.open.doi && oaCache.get(S.open.doi);
     if (hit) S.open.unpaywall = hit; else findFreeCopy(S.open);
@@ -2080,6 +2179,7 @@ function renderSheet(){
       <h3 class="sheet-title">${esc(p.title)}</h3>
       ${p.authors ? `<p class="sheet-authors">${esc(p.authors)}</p>` : ""}
       <dl class="kv">${kv.join("")}</dl>
+      ${trialBlock(p)}
       ${(p.epmcId || (p.authorList || []).length) ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
         ${p.epmcId ? `<button class="btn btn-sm" type="button" data-cited="${esc(p.epmcSource || "MED")}:${esc(p.epmcId)}"
           title="Papers that cite this one, classified and placed on the same grid">
