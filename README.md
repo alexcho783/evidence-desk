@@ -8,12 +8,16 @@ Static files, no build step, no framework, no tracking. Accounts are optional an
 default; left alone, the site has no backend at all.
 
 ```
-index.html           markup and icons
-styles.css           design tokens and layout
-app.js               retrieval, classification, rendering
-config.js            account sync settings — blank by default, which disables accounts
-auth.js              Supabase wrapper; loads nothing unless config.js is filled in
-supabase-setup.sql   table, row-level security and account deletion
+index.html                       markup and icons
+styles.css                       design tokens and layout
+app.js                           retrieval, rendering, exports
+classify.js                      the classifier, on its own and with no DOM
+config.js                        account sync settings, blank by default, which disables accounts
+auth.js                          Supabase wrapper; loads nothing unless config.js is filled in
+supabase-setup.sql               table, row-level security and account deletion
+tools/build-fixture.mjs          refreshes the validation set from Europe PMC
+test/classify.test.mjs           node --test; prints the agreement figure
+test/fixtures/medline-sample.json  312 indexed MEDLINE records, committed so tests run offline
 ```
 
 ## Run it locally
@@ -22,8 +26,28 @@ supabase-setup.sql   table, row-level security and account deletion
 python3 -m http.server 8000
 ```
 
-Then open <http://localhost:8000>. Opening `index.html` directly with `file://` also works, but a
-local server is closer to how it will behave when deployed.
+Then open <http://localhost:8000>. A local server is now required: `app.js` is an ES module so
+that `classify.js` can be imported and tested, and browsers refuse to load modules over
+`file://`. Opening `index.html` directly gives a blank page.
+
+## Tests
+
+```bash
+node --test
+```
+
+No install step and no dependencies. The classifier runs twice over 312 MEDLINE records that
+carry publication types assigned by human indexers: once with the types, which is the truth,
+and once with them removed, which is what the site does for a record that is not indexed yet.
+It prints a confusion table and the agreement figure, and fails below a floor.
+
+Agreement is **51%**. That is the number on the Ranking page, and it counts "Design unclear" as
+its own outcome rather than as a match, because not knowing is not a judgement; letting it
+count would read 59.9%. Most of the disagreement is the classifier reading nothing it
+recognises, not reading something and getting it wrong.
+
+`tools/build-fixture.mjs` refreshes the fixture and needs network. It deliberately lives
+outside `test/`, because `node --test` runs every file in that directory.
 
 ## Deploy
 
