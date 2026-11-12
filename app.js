@@ -73,10 +73,18 @@ function tierMeta(k){
   return { ...(TIER[k] || TIER.narrative), ...((s.overrides || {})[k] || {}) };
 }
 
+/* Three bands, all derived from the current year so none of them ages: the last five
+   years, five to fifteen years ago, and older than that. qFrom and qTo are the same
+   boundaries as a year range Europe PMC will accept, so the column a paper is drawn in and
+   the column a count is asked for can never disagree. The newest band runs a year past the
+   current one, because records appear ahead of print with next year's date on them. */
 const ERA_COLS = [
-  {k:"old", label:"Before " + (Y-14), sub:"Older work",    test:p => !!p.year && p.year <  Y-14},
-  {k:"mid", label:(Y-14) + "–" + (Y-5), sub:"Established", test:p => !!p.year && p.year >= Y-14 && p.year <= Y-5},
-  {k:"new", label:(Y-4) + "–now",     sub:"Current",       test:p => !!p.year && p.year >= Y-4}
+  {k:"old", label:"Before " + (Y-15),       sub:"Older work",    qFrom:1800, qTo:Y-16,
+            test:p => !!p.year && p.year <= Y-16},
+  {k:"mid", label:(Y-15) + "\u2013" + (Y-5), sub:"Established",   qFrom:Y-15, qTo:Y-5,
+            test:p => !!p.year && p.year >= Y-15 && p.year <= Y-5},
+  {k:"new", label:(Y-4) + "\u2013now",       sub:"Last 5 years",  qFrom:Y-4,  qTo:Y+1,
+            test:p => !!p.year && p.year >= Y-4}
 ];
 
 
