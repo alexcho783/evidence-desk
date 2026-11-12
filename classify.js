@@ -87,6 +87,16 @@ export function classify(r){
      was randomised. An animal study that randomises its animals is still an animal study. */
   const humanPhrase = grab(/\b(patients|participants|volunteers|outpatients|inpatients|adults|children|infants|neonates|women|men|pregnant)\b/);
 
+  /* Guidelines and consensus statements had no text rule at all, so every one of the 39
+     in the validation set that lost its indexed type came back "Design unclear". They are
+     the most recognisable documents in the literature: they say what they are in the
+     title, and they recommend things rather than reporting them. */
+  const guidePhrase = (ttl.match(/clinical practice guideline|practice guideline|\bguidelines?\b|consensus statement|consensus recommendations|position statement|appropriate use criteria/) || [""])[0]
+    || grab(/\b(this|these) guidelines?\b|guideline development group|guideline panel|modified delphi|delphi (process|method|panel)|consensus (statement|process|conference)|we recommend that|strength of (each )?recommendation|using grade|grade methodology/);
+  if (guidePhrase)
+    return {design: /consensus|delphi|position statement/.test(guidePhrase) ? "Consensus statement" : "Guideline",
+            tier:"guideline", src:"inferred", because: guidePhrase};
+
   /* A protocol describes a trial that has not reported. Placing it at trial level puts a
      plan on the same row as a result, which is the opposite of what the grid is for. */
   const protoPhrase = (/\bprotocol\b|rationale and design/.test(ttl) ? (ttl.match(/\bprotocol\b|rationale and design/) || [""])[0] : "")
