@@ -76,14 +76,6 @@ function requireSession(){
 }
 const redirectTo = () => location.origin + location.pathname;
 
-/* 22 characters of crypto-grade randomness: long enough that a shared link cannot be
-   found by guessing, which is the only thing standing between a link and the open web. */
-function randomSlug(){
-  const a = new Uint8Array(16);
-  crypto.getRandomValues(a);
-  return [...a].map(b => "abcdefghijkmnpqrstuvwxyz23456789"[b & 31]).join("").slice(0, 22);
-}
-
 window.EDAuth = {
   enabled,
   ready,
@@ -158,91 +150,6 @@ window.EDAuth = {
         .upsert(rows.slice(i, i + 100), { onConflict: "user_id,paper_id" });
       if (error) throw new Error(friendly(error));
     }
-  },
-
-  /* ── N12: shared read-only collections ──────────────────────────────────────
-     A snapshot, written when you share. See supabase-setup.sql for why it is a copy
-     rather than a live view of the reading list. */
-
-  async share(name, papers, withNotes){
-    const uid = requireSession();
-    const slug = randomSlug();
-    /* Notes are personal. They are stripped here, on the way out, rather than hidden on
-       the way in: what is not written to the table cannot leak from it. */
-    const rows = papers.map(p => {
-      const copy = { ...p };
-      if (!withNotes) delete copy.note;
-      delete copy.collections;
-      return copy;
-    });
-    const { error } = await client.from("shared_collections").insert({
-      slug, user_id: uid, name: String(name || "Collection").slice(0, 80),
-      papers: rows, with_notes: !!withNotes
-    });
-    if (error) throw new Error(friendly(error));
-    return slug;
-  },
-
-  async unshare(slug){
-    const uid = requireSession();
-    const { error } = await client.from("shared_collections")
-      .delete().eq("user_id", uid).eq("slug", slug);
-    if (error) throw new Error(friendly(error));
-  },
-
-  /* Readable signed out, which is the point, and only one row at a time. This goes through
-     a function rather than selecting from the table because the table must not be
-     listable: a policy permissive enough to read anyone's shared collection by slug is
-     also permissive enough to read all of them at once. See supabase-setup.sql. */
-  async openShared(slug){
-    if (!client) return null;
-    const { data, error } = await client.rpc("get_shared_collection", { want_slug: slug });
-    if (error) return null;
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row) return null;
-    return { slug: row.slug, name: row.name, withNotes: !!row.with_notes,
-             papers: Array.isArray(row.papers) ? row.papers : [] };
-  },
-
-  async mySharedSlugs(){
-    if (!client || !session) return [];
-    const { data, error } = await client.from("shared_collections").select("slug, name");
-    if (error) return [];
-    return data || [];
-  },
-
-  /* ── N11: saved search alerts ───────────────────────────────────────────────
-     Row-level security does the work here as everywhere else: these all run as the signed
-     in person, and the database refuses anything that is not their own row. */
-
-  async saveSearch(query, source){
-    const uid = requireSession();
-    const { error } = await client.from("saved_searches").insert({
-      user_id: uid, query: String(query || "").slice(0, 300), source: source || "med"
-    });
-    if (error) throw new Error(friendly(error));
-  },
-
-  async myAlerts(){
-    if (!client || !session) return [];
-    const { data, error } = await client.from("saved_searches")
-      .select("id, query, source, paused, last_run").order("created_at", { ascending: false });
-    if (error) return [];
-    return data || [];
-  },
-
-  async setAlertPaused(id, paused){
-    const uid = requireSession();
-    const { error } = await client.from("saved_searches")
-      .update({ paused: !!paused }).eq("user_id", uid).eq("id", id);
-    if (error) throw new Error(friendly(error));
-  },
-
-  async deleteAlert(id){
-    const uid = requireSession();
-    const { error } = await client.from("saved_searches")
-      .delete().eq("user_id", uid).eq("id", id);
-    if (error) throw new Error(friendly(error));
   },
 
   async remove(id){

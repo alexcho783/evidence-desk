@@ -20,8 +20,8 @@ entry says which part and what is left.
 | N8 | Best synthesis pinned | High | Low | **Built** (N8) |
 | N9 | Guideline link out | Medium | Low | **Built** (N9) |
 | N10 | PICO question builder | Medium | Medium | **Built** (N10) |
-| N11 | Saved search alerts | Medium | Medium | **Written, not deployed** (N11) |
-| N12 | Shareable read only collections | Medium | Low | **Written, not deployed** (N12) |
+| N11 | Saved search alerts | Medium | Medium | Not started (built once, then removed) |
+| N12 | Shareable read only collections | Medium | Low | Not started (built once, then removed) |
 | N13 | Installable app and offline reading list | Medium | Low | Not started |
 | N14 | Keyboard shortcuts | Low | Low | Not started |
 | N15 | Compare two questions | Low | Medium | **Built** (N15) |
@@ -33,10 +33,10 @@ entry says which part and what is left.
 Build order from the specification: **N1, N2** first; then **N3, N5, N8, N19**; then
 **N4, N7, N16, N18**; the rest by what people ask for.
 
-**Where this stands.** Everything except N4, N13, N14 and N17 is built. N11 and N12 are
-written but not deployed: both need schema changes to a live Supabase project, and the
-README has the exact commands. The four that remain were set aside deliberately, not
-because they are hard.
+**Where this stands.** Ten features are built: N1, N2, N3, N5, N6, N7, N8, N9, N10, N15,
+N16, N18 and N19. N4, N13, N14 and N17 were never started. N11 and N12 were built and then
+removed before either worked, so the site is back to needing nothing of a Supabase project
+beyond the reading-list sync it always used.
 
 ---
 
@@ -198,7 +198,11 @@ Four optional boxes assembling a visible, editable Europe PMC query. OR within a
 between boxes, quote multi-word phrases. PICO parts go in the URL so built searches stay
 shareable. The plain search box stays the default. Synonyms last.
 
-## N11 Saved search alerts — written, not deployed
+## N11 Saved search alerts — not started
+
+Built in full once and then removed at the owner's request, along with N12, before either
+was working. The specification below stands; `git log --grep="^N11"` has the implementation
+if it is ever wanted back.
 
 `saved_searches (user_id, query, filters, last_run, last_seen_ids)` with the same row level
 security pattern; a Supabase Edge Function run weekly by `pg_cron` queries Europe PMC with a
@@ -206,7 +210,13 @@ date filter since `last_run`; email through a transactional provider with the ke
 Supabase secret. Adds personal data and a scheduled job, so the privacy page must change.
 Rate limit per user. Unsubscribe links.
 
-## N12 Shareable read only collections — written, not deployed
+## N12 Shareable read only collections — not started
+
+Built in full once and then removed at the owner's request. Worth knowing if it is rebuilt:
+the first version of its schema let anyone holding the public anon key list every shared
+collection on the site, because `for select using (true)` plus PostgREST means the table is
+queryable, and the slug stops being a secret. Reading has to go through a function that
+takes one slug and returns at most one row. See `git log --grep="^N12"`.
 
 A collections table (or a public flag) with a random slug, and a policy allowing anonymous
 `select` only where `public` is true. Share toggle with "include my notes" as a **separate**
@@ -290,16 +300,10 @@ the marker. Across the 312-record validation set that is 50 confident, 47 uncert
 ## Still open
 
 **N4 screening mode**, **N13 installable app and offline reading list**, **N14 keyboard
-shortcuts** and **N17 preprint and published version merged** were deliberately left. Their
-specifications above are unchanged and still buildable as written.
+shortcuts** and **N17 preprint and published version merged** were deliberately left, and
+**N11 saved search alerts** and **N12 shareable read only collections** were built and then
+removed. All six specifications above are unchanged and still buildable as written.
 
 N17 has one extra note from testing: a bioRxiv paper reached the reading list as a `PMC:`
 record with no authors and no preprint flag, because preprint detection keys on the source
 being `PPR`. Whatever N17 does about linked pairs should cover that case too.
-
-## Deployment still owed
-
-N11 and N12 are code-complete and inert. Neither has touched the live Supabase project.
-`supabase-setup.sql` carries the tables, the policies and a `delete_my_account()` that
-clears all three tables in one transaction; the README has the function deploy, the three
-secrets, the 401 check and the cron schedule, in the order to run them.

@@ -446,22 +446,6 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .cmp-cell[data-w="weak"] .cmp-fill{background:var(--line)}
 .cmp-cell b{position:relative; font-family:var(--f-data); font-size:11.5px; font-weight:600}
 .cmp-note{margin:11px 0 0; font-size:11.5px; color:var(--faint); line-height:1.5}
-
-/* N12: sharing a collection. */
-.sharerow{display:flex; gap:7px; align-items:center; margin-top:9px; flex-wrap:wrap}
-.sharerow input{flex:1; min-width:200px; font:inherit; font-size:12.5px;
-  font-family:var(--f-data); color:var(--ink); background:var(--surface-2);
-  border:1px solid var(--line); border-radius:var(--r-s); padding:6px 9px}
-.sharechk{display:flex; align-items:center; gap:7px; margin-top:8px; font-size:13px; cursor:pointer}
-
-/* N11: the saved search alerts list. */
-.alerts{border:1px solid var(--line); border-radius:var(--r-m); padding:13px 15px; margin:14px 0}
-.alert-row{display:flex; align-items:center; gap:9px; flex-wrap:wrap; padding:7px 0;
-  border-top:1px solid var(--line-soft)}
-.alert-q{flex:1; min-width:170px; text-align:left; font:inherit; font-size:13.5px;
-  background:none; border:0; padding:0; color:var(--ink); cursor:pointer}
-.alert-q:hover{color:var(--accent)}
-.alert-when{font-size:11.5px; color:var(--faint); font-family:var(--f-data)}
 .p-empty{font-size:11px; color:var(--line); font-family:var(--f-data)}
 
 /* B1: the indexed total for a cell, kept visually apart from the dots because it is a
