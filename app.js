@@ -163,6 +163,8 @@ const S = {
   /* Indexed counts for the grid, fetched after the results land so they never hold up the
      page. `key` records which search they belong to, so a stale set is never drawn. */
   indexed:{key:"", data:null, busy:false, err:false},
+  sampled:0,        /* how many of the listed papers were pulled from the grid cells */
+  cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
   open:null, confirmDel:false, confirmClear:false,
@@ -656,6 +658,12 @@ function identifierQuery(raw){
 function buildQuery(){
   const ident = identifierQuery(S.q);
   if (ident) return ident;
+  /* A cell of the grid is a design and an era together, so it replaces the design filter
+     and the year range rather than stacking on top of them. */
+  if (S.cell) {
+    const col = ERA_COLS.find(c => c.k === S.cell.c);
+    return cellQuery(S.cell.t, col);
+  }
   const parts = [S.q.trim()];
   const d = DESIGN_FILTERS.find(x => x.k === S.design);
   if (d && d.q) parts.push(d.q);
@@ -768,6 +776,15 @@ function indexedKey(){
     ? JSON.stringify([S.q.trim(), S.openOnly]) : "";
 }
 
+/* One request per cell does both jobs. Asking for three records sorted by citations
+   instead of one record sorted by nothing costs the same round trip, and gives the cell
+   its count from hitCount and its sample from the rows. That is 18 requests a search
+   rather than 36, which is why the counts and the sampling are not separate passes. */
+function cellQuery(tier, col){
+  return `(${S.q.trim()}) AND ${TIER_TYPE[tier]} AND (PUB_YEAR:[${col.qFrom} TO ${col.qTo}])`
+    + (S.openOnly ? ' AND (OPEN_ACCESS:y)' : "");
+}
+
 async function loadIndexed(signal){
   const key = indexedKey();
   if (!key || S.indexed.key === key) return;
@@ -778,19 +795,26 @@ async function loadIndexed(signal){
   S.indexed = {key, data:null, busy:true, err:false};
   render();
 
-  const data = {};
+  const data = {}, sample = [];
   let next = 0, failed = 0;
   const worker = async () => {
     while (next < jobs.length) {
       const {t, c} = jobs[next++];
-      const query = `(${S.q.trim()}) AND ${TIER_TYPE[t]} AND (PUB_YEAR:[${c.qFrom} TO ${c.qTo}])`
-        + (S.openOnly ? ' AND (OPEN_ACCESS:y)' : "");
-      const p = new URLSearchParams({query, format:"json", pageSize:"1", resultType:"idlist"});
+      const p = new URLSearchParams({
+        query: cellQuery(t, c), format:"json", resultType:"core",
+        pageSize:"3", sort:"CITED desc"
+      });
       try {
         const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}, signal});
         if (!r.ok) { failed++; continue; }
         const d = await r.json();
         data[t + "/" + c.k] = d.hitCount || 0;
+        ((d.resultList && d.resultList.result) || []).forEach((row, i) => {
+          /* `place` is how far down its own cell this paper came, the rows having arrived
+             sorted by citations, and `rank` is the row's place on the evidence ladder. */
+          sample.push({...normalise(row), fromCell: t + "/" + c.k,
+                       place: i, rank: (TIER[t] || {}).rank, era: ERA_COLS.indexOf(c)});
+        });
       } catch (e) {
         if (aborted(e)) throw e;
         failed++;
@@ -806,6 +830,26 @@ async function loadIndexed(signal){
   /* A partial set would make some cells look emptier than they are, so anything short of
      the full grid is reported as unavailable rather than drawn. */
   S.indexed = {key, data: failed ? null : data, busy:false, err: failed > 0};
+
+  /* The sampled papers go in front of the relevance page, de-duplicated against it and
+     against each other, highest cited first. Without this the grid can show 249 indexed
+     trials while not one of them is listed, which is its own kind of dishonest. */
+  if (!failed && sample.length) {
+    /* The best of every cell first, in ladder order, then the second best of every cell,
+       and so on. Sorting the whole sample by citations instead would hand the top of the
+       list to the Review row, whose records out-cite everything: for the CMT1A query that
+       put "Physiology of Astroglia" above the ascorbic acid trials the search is for. */
+    sample.sort((a, b) => a.place - b.place || a.rank - b.rank || a.era - b.era
+                       || (b.citations || 0) - (a.citations || 0));
+    const seen = new Set(S.results.map(x => x.id));
+    const fresh = [];
+    for (const p of sample) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id); fresh.push(p);
+    }
+    S.sampled = fresh.length;
+    S.results = fresh.concat(S.results);
+  }
   render();
 }
 
@@ -834,7 +878,9 @@ async function runSearch(q, opts){
   S.q = q; S.lastQ = q;
   S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = false;
-  S.indexed = {key:"", data:null, busy:false, err:false};
+  /* A search into one cell keeps the grid that was already drawn: the counts describe the
+     whole literature for this question and did not change because one cell was opened. */
+  if (!S.cell) { S.indexed = {key:"", data:null, busy:false, err:false}; S.sampled = 0; }
   go("search", {silent:true});
   render();
 
@@ -858,7 +904,7 @@ async function runSearch(q, opts){
 
   /* After the page is on screen, not before: the grid draws from the listed papers first
      and the counts fill in when they arrive. */
-  if (!S.err && S.results.length) loadIndexed(ctrl.signal).catch(() => {});
+  if (!S.err && S.results.length && !S.cell) loadIndexed(ctrl.signal).catch(() => {});
 }
 
 /* OpenAlex computes related works for everything it indexes, so a Europe PMC paper is
@@ -870,6 +916,7 @@ async function similarTo(paper){
   const mine = ++seq;
   S.open = null; S.confirmDel = false;
   S.indexed = {key:"", data:null, busy:false, err:false};
+  S.sampled = 0; S.cell = null;
   S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = true;
   S.chainLabel = `papers similar to ${label}`;
@@ -1209,14 +1256,16 @@ function renderSearch(){
         <span class="grow">Showing <b>${esc(S.chainLabel.slice(0, 110))}</b></span>
         <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
       <div class="list-head">
-        <span class="list-h">${S.chainLabel ? "Related papers" : "Results"}</span>
+        <span class="list-h">${S.cell ? "One cell of the grid" : S.chainLabel ? "Related papers" : "Results"}</span>
         <span class="list-n">${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above</span>
         <span style="flex:1"></span>
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
         <button class="btn btn-sm" id="save-all">${svg("i-plus")}Save all shown</button>
       </div>
       ${plot(S.results)}
-      <div class="list-head"><span class="list-h">Papers</span></div>
+      <div class="list-head"><span class="list-h">Papers</span>${S.sampled
+        ? `<span class="list-n">the first ${S.sampled} are the most cited in each cell of the grid, then the relevance list</span>`
+        : ""}</div>
       <div class="cards">${S.results.map((p, i) => card(p, i + 1)).join("")}</div>
       ${S.exhausted
         ? `<p style="text-align:center;color:var(--faint);font-size:12.5px;margin-top:18px">
@@ -1902,10 +1951,10 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
-  if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { home(); return; }
+  if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
   if (t.id === "clear-recent") { clearRecent(); return; }
   if (t.id === "sign-in-open") { S.signIn = true; S.account.sent = ""; S.account.note = ""; renderSheet(); return; }
   if (t.id === "signin-x" || t.id === "bd-signin") { S.signIn = false; S.account.note = ""; renderSheet(); return; }
@@ -1916,6 +1965,15 @@ document.addEventListener("click", (ev) => {
   if (t.id === "wipe-no")  { S.account.confirmWipe = false; render(); return; }
   if (t.id === "wipe-yes") { deleteAccount(); return; }
   if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
+  if (t.hasAttribute("data-cell")) {
+    const [tier, colK] = t.dataset.cell.split("/");
+    const col = ERA_COLS.find(c => c.k === colK);
+    if (!col) return;
+    S.cell = {t: tier, c: colK};
+    const noun = (tierMeta(tier).noun || ["record", "records"])[1];
+    runSearch(S.q || S.lastQ, {chain: `indexed ${noun} from ${col.label.toLowerCase()}`});
+    return;
+  }
   if (t.dataset.uncoll && S.open) {
     const cur = S.list.get(S.open.id);
     if (cur) { setCollections(S.open.id, (cur.collections || []).filter(c => c !== t.dataset.uncoll));
