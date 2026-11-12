@@ -286,6 +286,7 @@ const S = {
   plotView:"grid",   /* grid, or an exact-year timeline */
   builder:false,     /* the PICO question builder, under the search box */
   pico:{p:"", i:"", c:"", o:""},
+  compare:{open:false, q:"", key:"", data:null, busy:false, err:false},
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -1351,6 +1352,47 @@ async function loadStartHere(signal){
   render();
 }
 
+/* ══ Compare two questions ═══════════════════════════════════════════════════════════
+ *
+ * Two evidence maps on one screen, drawn to the same scale, which is the point: one drug
+ * resting on trials and syntheses beside another resting on observational work is a
+ * difference you can see in a second and would take minutes to read out of two lists.
+ *
+ * Only the indexed counts are fetched for the second question, not its papers. The grid is
+ * the comparison; the list below stays with the first question, so nothing about which
+ * results you were reading changes under you.
+ */
+async function loadCompare(signal){
+  const q2 = S.compare.q.trim();
+  const key = JSON.stringify([q2, S.openOnly]);
+  if (!q2 || S.compare.key === key) return;
+  S.compare = {...S.compare, key, data:null, busy:true, err:false};
+  render();
+
+  const jobs = [];
+  for (const t of Object.keys(TIER_TYPE)) for (const c of ERA_COLS) jobs.push({t, c});
+  const data = {};
+  let next = 0, failed = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const {t, c} = jobs[next++];
+      const query = `(${q2}) AND ${TIER_TYPE[t]} AND (PUB_YEAR:[${c.qFrom} TO ${c.qTo}])`
+        + (S.openOnly ? " AND (OPEN_ACCESS:y)" : "");
+      const p = new URLSearchParams({query, format:"json", pageSize:"1", resultType:"idlist"});
+      try {
+        const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}, signal});
+        if (!r.ok) { failed++; continue; }
+        data[t + "/" + c.k] = ((await r.json()).hitCount) || 0;
+      } catch (e) { if (aborted(e)) throw e; failed++; }
+    }
+  };
+  try { await Promise.all(Array.from({length: COUNT_CONCURRENCY}, worker)); }
+  catch (e) { if (aborted(e)) return; }
+  if (S.compare.key !== key) return;
+  S.compare = {...S.compare, data: failed ? null : data, busy:false, err: failed > 0};
+  render();
+}
+
 /* ══ Integrity recheck ═══════════════════════════════════════════
  *
  * A retraction flag read at the moment a paper was saved is a fact about that moment. The
@@ -1496,6 +1538,7 @@ async function runSearch(q, opts){
   if (!S.err && S.results.length && !S.cell) {
     loadIndexed(ctrl.signal).catch(() => {});
     loadStartHere(ctrl.signal).catch(() => {});
+    if (S.compare.open && S.compare.q) loadCompare(ctrl.signal).catch(() => {});
   }
 }
 
@@ -1600,6 +1643,7 @@ function pushUrl(){
      the person you send it to sees a different set of papers from the one you meant. */
   if (S.cell) p.set("cell", S.cell.t + "/" + S.cell.c);
   for (const f of PICO) if (S.pico[f.k]) p.set("pico" + f.k, S.pico[f.k]);
+  if (S.compare.open && S.compare.q) p.set("q2", S.compare.q);
   if (S.view !== "search") p.set("v", S.view);
   const url = location.pathname + (p.toString() ? "?" + p.toString() : "");
   history.pushState({}, "", url);
@@ -1613,6 +1657,8 @@ function readUrl(){
   S.openOnly = p.get("oa") === "1";
   S.yearFrom = /^\d{4}$/.test(p.get("from") || "") ? p.get("from") : "";
   S.yearTo = /^\d{4}$/.test(p.get("to") || "") ? p.get("to") : "";
+  const q2 = (p.get("q2") || "").slice(0, 200);
+  if (q2) S.compare = {open:true, q:q2, key:"", data:null, busy:false, err:false};
   let anyPico = false;
   for (const f of PICO) {
     const v = (p.get("pico" + f.k) || "").slice(0, 140);
@@ -1703,6 +1749,56 @@ function card(p, idx){
  * no facet parameter, and asking year by year costs one request per year per row, which
  * measured 62 seconds for two rows over 22 years.
  */
+/* A counts-only grid, used for both halves of a comparison so each is drawn by the same
+   code against the same scale. `peak` is shared between the two, which is what makes them
+   comparable: scaling each to its own maximum would make a weak literature look strong. */
+function countGrid(data, peak){
+  const ladder = tiers().filter(t => TIER_TYPE[t.k]);
+  let g = `<div class="cmp-corner"></div>`;
+  for (const c of ERA_COLS) g += `<div class="cmp-colhead">${esc(c.label)}</div>`;
+  for (const t of ladder) {
+    g += `<div class="cmp-rowhead ${t.w === "strong" ? "p-row-strong" : "p-row-weak"}">${esc(t.label)}</div>`;
+    for (const c of ERA_COLS) {
+      const n = (data && data[t.k + "/" + c.k]) || 0;
+      const fill = peak > 0 ? (0.07 + 0.55 * (n / peak)) : 0;
+      g += `<div class="cmp-cell" data-w="${t.w}" title="${esc(`${n.toLocaleString()} indexed ${(t.noun || ["record","records"])[n === 1 ? 0 : 1]} in ${c.label}`)}">
+        <span class="cmp-fill" style="opacity:${fill.toFixed(3)}"></span>
+        <b>${n >= 10000 ? Math.round(n / 1000) + "k" : n.toLocaleString()}</b></div>`;
+    }
+  }
+  return `<div class="cmp-grid">${g}</div>`;
+}
+
+function comparePanel(){
+  const c = S.compare;
+  if (!c.open) return "";
+  const mine = S.indexed.data, theirs = c.data;
+  const all = [...Object.values(mine || {}), ...Object.values(theirs || {})];
+  const peak = all.length ? Math.max(1, ...all) : 1;
+  return `<section class="cmp">
+    <div class="cmp-head">
+      <b>Compare two questions</b>
+      <span>Both grids use the same scale, so the shading is comparable.</span>
+      <button class="btn btn-sm btn-quiet" id="cmp-close" type="button">${svg("i-x")}Close</button>
+    </div>
+    <form id="cmp-form" class="cmp-form">
+      <label class="sr" for="cmp-q">The other question</label>
+      <input id="cmp-q" value="${esc(c.q)}" maxlength="200" autocomplete="off"
+        placeholder="a second question, for example empagliflozin heart failure">
+      <button class="btn btn-sm btn-primary" type="submit"${c.busy ? " disabled" : ""}>${c.busy ? "Counting" : "Compare"}</button>
+    </form>
+    ${mine || theirs ? `<div class="cmp-pair">
+      <div><div class="cmp-q">${esc(S.lastQ || "This question")}</div>${countGrid(mine, peak)}</div>
+      <div><div class="cmp-q">${c.q ? esc(c.q) : "The other question"}</div>${
+        c.busy ? `<p class="sh-note">Counting.</p>`
+        : c.err ? `<p class="sh-note">Europe PMC did not return these counts.</p>`
+        : theirs ? countGrid(theirs, peak)
+        : `<p class="sh-note">Type a question above.</p>`}</div>
+    </div>
+    <p class="cmp-note">Counts are indexed records only, for each question as written. Different wording changes them, so compare the questions as well as the grids. The list below belongs to the first question.</p>` : ""}
+  </section>`;
+}
+
 function timeline(rows){
   const placed = rows.filter(p => !!p.year);
   if (!placed.length) return "";
@@ -2001,6 +2097,7 @@ function renderSearch(){
         <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
       ${S.refsNote ? `<div class="notice" role="status">${svg("i-info")}<div>${esc(S.refsNote)}</div></div>` : ""}
       ${pinned}
+      ${comparePanel()}
       <div class="list-head">
         <span class="list-h">${S.cell ? "One cell of the grid" : S.chainLabel ? "Related papers" : "Results"}</span>
         <span class="list-n">${designTiers() && !S.cell
@@ -2016,6 +2113,8 @@ function renderSearch(){
             <p>National guidance is often not indexed in MEDLINE, so the Guideline row here under-counts it. These open a search elsewhere.</p>
           </div>` : ""}
         </span>` : ""}
+        ${S.source === "med" ? `<button class="btn btn-sm" id="cmp-open" type="button"
+          title="Put a second question's evidence map beside this one">${svg("i-link")}Compare</button>` : ""}
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
         <button class="btn btn-sm" id="save-all">${svg("i-plus")}Save all shown</button>
       </div>
@@ -2947,7 +3046,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -2964,6 +3063,9 @@ document.addEventListener("click", (ev) => {
   if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
   if (t.id === "guide-pick") { S.guideMenu = !S.guideMenu; render(); return; }
   if (t.id === "builder-toggle") { S.builder = !S.builder; render(); return; }
+  if (t.id === "cmp-open") { S.compare = {...S.compare, open:true}; render();
+    setTimeout(() => { const el = $("cmp-q"); if (el) el.focus(); }, 0); return; }
+  if (t.id === "cmp-close") { S.compare = {open:false, q:"", key:"", data:null, busy:false, err:false}; render(); return; }
   if (t.dataset.syn) {
     const [k, word] = t.dataset.syn.split("|");
     const cur = S.pico[k].trim();
@@ -3147,6 +3249,14 @@ document.addEventListener("submit", (ev) => {
     const el = document.querySelector("#email-in");
     const v = ((el && el.value) || "").trim();
     if (v) sendMagicLink(v);
+    return;
+  }
+  if (ev.target.id === "cmp-form") {
+    ev.preventDefault();
+    const el = $("cmp-q");
+    S.compare = {...S.compare, q: (el && el.value || "").trim()};
+    pushUrl();                     /* a comparison is part of what is being shown */
+    loadCompare().catch(() => {});
     return;
   }
   if (ev.target.id === "search-form") {
