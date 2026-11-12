@@ -21,8 +21,22 @@ export function classify(r){
   const ttl = String(r.title || "").toLowerCase();
   const re = x => { const m = x.exec(txt); if (m) why = m[0].trim(); return !!m; };
 
+  /* One exception to "indexed types always win", and it runs before them because the claim
+     it overrides is the strongest one on the ladder. Europe PMC types a Cochrane protocol
+     as systematic-review, since that is what it will become, but the document itself
+     reports nothing: its abstract says "This is a protocol for a Cochrane review". Placing
+     a plan at synthesis level is the error A3 exists to prevent, one rung higher up. */
+  const protoSays = /this is (?:a|the) protocol for/.exec(txt)
+    || /^protocol(?:\s|:)/.exec(ttl) || /\bprotocol for a cochrane review\b/.exec(txt);
+  if (protoSays)
+    return {design: /\btrial\b/.test(txt) ? "Trial protocol" : "Protocol",
+            tier:"narrative", src:"inferred", because: protoSays[0].trim()};
+
+  /* Europe PMC carries its own lower-case hyphenated types alongside MEDLINE's, and only
+     the MEDLINE spellings were being checked. */
   if (has("meta-analysis"))      return {design:"Meta-analysis",   tier:"synthesis", src:"metadata", because: why};
-  if (has("systematic review"))  return {design:"Systematic review", tier:"synthesis", src:"metadata", because: why};
+  if (has("systematic review","systematic-review"))
+                                 return {design:"Systematic review", tier:"synthesis", src:"metadata", because: why};
   if (has("practice guideline","guideline","consensus development conference"))
                                  return {design:"Guideline",       tier:"guideline", src:"metadata", because: why};
   if (has("consensus statement")) return {design:"Consensus statement", tier:"guideline", src:"metadata", because: why};

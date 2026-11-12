@@ -206,6 +206,7 @@ const S = {
   sampled:0,        /* how many of the listed papers were pulled from the grid cells */
   refsNote:"",      /* what a reference list is missing, in words, or "" when it is whole */
   integrity:{busy:false, ran:false, newly:[]},   /* the Crossref retraction recheck */
+  startHere:{key:"", cochrane:null, other:null, busy:false},  /* the pinned syntheses */
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -1086,6 +1087,53 @@ async function citesOf(srcCode, id, label){
   render();
 }
 
+/* ══ Start here: the most recent synthesis ═══════════════════════════════════════════
+ *
+ * For a clinical question the usual best place to begin is a recent systematic review, and
+ * a reader should not have to find it among 25 results. Two small queries per search: the
+ * most recent Cochrane review, and the most recent meta-analysis from anywhere else. Both
+ * are shown with their year, because a synthesis is only as current as its search date.
+ *
+ * JOURNAL:"Cochrane Database Syst Rev" was checked against Europe PMC before being relied
+ * on; it returns the same 306 records for a test query as the journal's ISSN does.
+ */
+const COCHRANE = 'JOURNAL:"Cochrane Database Syst Rev"';
+
+async function loadStartHere(signal){
+  const key = indexedKey();
+  if (!key || S.startHere.key === key) return;
+  S.startHere = {key, cochrane:null, other:null, busy:true};
+  render();
+
+  /* Twelve, not one, then the newest that is actually a synthesis. The top hits are often
+     protocols for reviews rather than reviews: Cochrane publishes both, and Europe PMC
+     types a protocol as systematic-review because that is what it will become. For the
+     statin query the twelve most recent Cochrane records begin with six protocols in a
+     row. A protocol has nothing in it to read, which is the whole point of this panel. */
+  const one = async q => {
+    const p = new URLSearchParams({query:q, format:"json", resultType:"core",
+                                   pageSize:"12", sort:"P_PDATE_D desc"});
+    const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}, signal});
+    if (!r.ok) return null;
+    const d = await r.json().catch(() => null);
+    const rows = ((d && d.resultList && d.resultList.result) || []).map(normalise);
+    return rows.find(x => x.tier === "synthesis") || null;
+  };
+  const base = `(${S.q.trim()})` + (S.openOnly ? " AND (OPEN_ACCESS:y)" : "");
+  try {
+    const [cochrane, other] = await Promise.all([
+      one(`${base} AND ${COCHRANE}`),
+      one(`${base} AND (PUB_TYPE:"Meta-Analysis" OR PUB_TYPE:"Systematic Review") NOT ${COCHRANE}`)
+    ]);
+    if (S.startHere.key !== key) return;
+    S.startHere = {key, cochrane, other, busy:false};
+  } catch (e) {
+    if (aborted(e)) return;
+    S.startHere = {key, cochrane:null, other:null, busy:false};
+  }
+  render();
+}
+
 /* ══ Integrity recheck ═══════════════════════════════════════════
  *
  * A retraction flag read at the moment a paper was saved is a fact about that moment. The
@@ -1200,7 +1248,11 @@ async function runSearch(q, opts){
   S.cursor = "*"; S.exhausted = false;
   /* A search into one cell keeps the grid that was already drawn: the counts describe the
      whole literature for this question and did not change because one cell was opened. */
-  if (!S.cell) { S.indexed = {key:"", data:null, busy:false, err:false}; S.sampled = 0; }
+  if (!S.cell) {
+    S.indexed = {key:"", data:null, busy:false, err:false};
+    S.startHere = {key:"", cochrane:null, other:null, busy:false};
+    S.sampled = 0;
+  }
   go("search", {silent:true});
   render();
 
@@ -1224,7 +1276,10 @@ async function runSearch(q, opts){
 
   /* After the page is on screen, not before: the grid draws from the listed papers first
      and the counts fill in when they arrive. */
-  if (!S.err && S.results.length && !S.cell) loadIndexed(ctrl.signal).catch(() => {});
+  if (!S.err && S.results.length && !S.cell) {
+    loadIndexed(ctrl.signal).catch(() => {});
+    loadStartHere(ctrl.signal).catch(() => {});
+  }
 }
 
 /* OpenAlex computes related works for everything it indexes, so a Europe PMC paper is
@@ -1599,6 +1654,34 @@ function renderSearch(){
       `<button class="ex" data-ex="${esc(e.q)}"><span class="ex-tag">${esc(e.tag)}</span><span>${esc(e.q)}</span></button>`
     ).join("")}</div></div>` : "";
 
+  /* Pinned above the grid, because a reader who wants one answer wants this one. Shown
+     with its year and its age, since a synthesis is only as current as its search date,
+     and with a note when newer trials have appeared since. */
+  const pinned = (() => {
+    const sh = S.startHere;
+    const picks = [sh.cochrane, sh.other].filter(Boolean)
+      .filter((p, i, a) => a.findIndex(x => x.id === p.id) === i);
+    if (!picks.length) return "";
+    const idx = S.indexed.data;
+    const newestYear = Math.max(0, ...picks.map(p => p.year || 0));
+    /* How many indexed trials sit in era bands that end after the synthesis appeared. */
+    const laterTrials = idx && newestYear
+      ? ERA_COLS.filter(c => c.qTo > newestYear)
+          .reduce((n, c) => n + (idx["trial/" + c.k] || 0), 0)
+      : 0;
+    const age = y => { const a = Y - y; return a <= 0 ? "this year" : a === 1 ? "1 year old" : `${a} years old`; };
+    return `<section class="pinned">
+      <div class="pin-head">${svg("i-mark")}<b>Start here</b>
+        <span>the most recent synthesis for this question</span></div>
+      ${picks.map(p => `<button class="pin-card" type="button" data-open="${esc(p.id)}">
+        <span class="pin-t">${esc(p.title)}</span>
+        <span class="pin-m">${esc(p.journal || "")}${p.year ? ` · <span class="num">${p.year}</span>, ${age(p.year)}` : ""} · ${esc(p.design)}</span>
+      </button>`).join("")}
+      ${newestYear && Y - newestYear > 5 ? `<p class="pin-note">${svg("i-alert")}The newest synthesis here is ${age(newestYear)}${
+        laterTrials ? `, and Europe PMC has indexed ${laterTrials.toLocaleString()} trial${laterTrials === 1 ? "" : "s"} in the years since` : ""}.</p>` : ""}
+    </section>`;
+  })();
+
   let results = "";
   if (S.results.length) {
     const strong = S.results.filter(p => tierMeta(p.tier).w === "strong").length;
@@ -1606,6 +1689,7 @@ function renderSearch(){
         <span class="grow">Showing <b>${esc(S.chainLabel.slice(0, 110))}</b></span>
         <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
       ${S.refsNote ? `<div class="notice" role="status">${svg("i-info")}<div>${esc(S.refsNote)}</div></div>` : ""}
+      ${pinned}
       <div class="list-head">
         <span class="list-h">${S.cell ? "One cell of the grid" : S.chainLabel ? "Related papers" : "Results"}</span>
         <span class="list-n">${designTiers() && !S.cell

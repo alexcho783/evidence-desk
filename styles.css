@@ -353,6 +353,22 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .p-dot[data-small="1"][data-w="weak"] i{border-color:var(--mid)}
 .plot-legend .lg[data-w="small"] i{background:transparent; border:2px solid var(--muted)}
 .chip[data-k="small"]{background:transparent; border-style:dashed; color:var(--muted)}
+
+/* N8: the pinned syntheses, above the grid. Deliberately quiet: it is a shortcut to one
+   good paper, not a verdict, so it must not look like one. */
+.pinned{border:1px solid var(--line); border-radius:var(--r-m); padding:13px 15px 14px;
+  margin:18px 0 4px; background:var(--surface-2)}
+.pin-head{display:flex; align-items:center; gap:7px; font-size:12.5px; margin-bottom:9px}
+.pin-head svg{width:15px; height:15px; color:var(--accent)}
+.pin-head span{color:var(--faint)}
+.pin-card{display:block; width:100%; text-align:left; padding:9px 11px; border-radius:var(--r-s);
+  border:1px solid var(--line-soft); background:var(--surface); margin-top:7px; cursor:pointer}
+.pin-card:hover{border-color:var(--line)}
+.pin-t{display:block; font-family:var(--f-serif); font-size:15px; line-height:1.33}
+.pin-m{display:block; margin-top:4px; font-size:12px; color:var(--muted)}
+.pin-note{display:flex; align-items:flex-start; gap:6px; margin:10px 0 0;
+  font-size:12px; color:var(--weak)}
+.pin-note svg{width:14px; height:14px; flex:0 0 14px; margin-top:1px}
 .p-empty{font-size:11px; color:var(--line); font-family:var(--f-data)}
 
 /* B1: the indexed total for a cell, kept visually apart from the dots because it is a
