@@ -231,6 +231,9 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .btn-go{flex:0 0 auto; min-height:30px; padding:0 13px; border-radius:999px;
   background:var(--accent); color:var(--on-accent); font-size:13.5px; font-weight:600}
 .btn-go:disabled{opacity:.45; cursor:default}
+/* The button stays pressable while a search runs, so a newer search can replace it;
+   this keeps the softened look the disabled state used to give. */
+.btn-go[aria-busy="true"]{opacity:.6}
 
 .filters{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:14px}
 .filters .flab{font-size:12px; color:var(--faint); font-weight:500}
