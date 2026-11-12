@@ -98,6 +98,11 @@ const DESIGN_FILTERS = [
   {k:"case",   label:"Case reports only",      q:'(PUB_TYPE:"Case Reports")'}
 ];
 
+/* Measured by test/classify.test.mjs against test/fixtures/medline-sample.json: how often
+   the text-only guess matches the publication type a human indexer assigned. Update this
+   when the fixture is rebuilt, or the Ranking page starts telling people something untrue. */
+const AGREEMENT = 51;
+
 const SORTS = [
   {k:"relevance", label:"Relevance", q:""},
   {k:"recent",    label:"Newest",    q:"P_PDATE_D desc"},
@@ -1265,6 +1270,17 @@ function renderAbout(){
     <h2>Where the classification comes from</h2>
     <p>Most records carry publication types assigned by indexers at the US National Library of Medicine — <code>Randomized Controlled Trial</code>, <code>Meta-Analysis</code>, <code>Practice Guideline</code> and so on. Those are used directly and are reliable.</p>
     <p>Records with no such tag — newer entries, preprints, some non-MEDLINE journals — are classified by reading the title and abstract for the usual signals. Those are marked <span class="chip" data-k="tier">Design <span class="chip-inf">inferred</span></span> on the card. Treat an inferred label as a hint and check the paper. This is also why a record can read <i>Design unclear</i>: it is more honest than a confident guess.</p>
+
+    <p><b>How far to trust an inferred label, measured.</b> Take the records that do carry
+    indexed types, hide the types, and compare what the title and abstract alone would have
+    said against what the indexers said. On a sample of 312 records the inferred label
+    agrees with the indexing <b>${AGREEMENT}% of the time</b>. Most of the disagreement is
+    the classifier reading nothing it recognises and saying <i>Design unclear</i>, rather
+    than reading something and getting it wrong. It recognises syntheses well, guidelines
+    reasonably, and case reports and observational studies poorly. The figure is recomputed
+    by the test suite in the repository, so it is not a claim you have to take on trust.
+    What it does not cover: the sample stops at 2023, so it says nothing about how the very
+    newest records are handled, and those are exactly the ones most likely to be unindexed.</p>
 
     <h2>What it does not do</h2>
     <ul>
