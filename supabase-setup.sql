@@ -173,3 +173,99 @@ grant execute on function public.delete_my_account() to authenticated;
 --
 -- Check, while signed OUT, that the private table is still private. Should return 0 rows:
 -- select count(*) from public.reading_list;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- N11: saved search alerts
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- A signed-in person can save a search. Once a week a scheduled function reruns it and
+-- emails anything new. This adds two things the site did not have before: a scheduled job,
+-- and a reason to hold someone's email address for a purpose other than signing them in.
+-- The privacy page has to say so before this is switched on.
+
+create table if not exists public.saved_searches (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  query       text not null,
+  source      text not null default 'med',
+  filters     jsonb not null default '{}'::jsonb,
+  paused      boolean not null default false,
+  last_run    timestamptz,
+  last_seen   text[] not null default '{}',
+  created_at  timestamptz not null default now(),
+  constraint saved_searches_query_len check (char_length(query) between 2 and 300)
+);
+
+create index if not exists saved_searches_user_idx on public.saved_searches (user_id);
+create index if not exists saved_searches_due_idx  on public.saved_searches (paused, last_run);
+
+-- One person cannot sit on an unbounded number of weekly jobs.
+create or replace function public.saved_searches_cap()
+returns trigger language plpgsql as $$
+begin
+  if (select count(*) from public.saved_searches where user_id = new.user_id) >= 20 then
+    raise exception 'at most 20 saved searches';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists saved_searches_cap_trigger on public.saved_searches;
+create trigger saved_searches_cap_trigger before insert on public.saved_searches
+  for each row execute function public.saved_searches_cap();
+
+alter table public.saved_searches enable row level security;
+
+drop policy if exists "read own searches"   on public.saved_searches;
+drop policy if exists "insert own searches" on public.saved_searches;
+drop policy if exists "update own searches" on public.saved_searches;
+drop policy if exists "delete own searches" on public.saved_searches;
+
+create policy "read own searches" on public.saved_searches
+  for select using (auth.uid() = user_id);
+create policy "insert own searches" on public.saved_searches
+  for insert with check (auth.uid() = user_id);
+create policy "update own searches" on public.saved_searches
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "delete own searches" on public.saved_searches
+  for delete using (auth.uid() = user_id);
+
+-- Account deletion, once more, so it stays one transaction.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'not signed in';
+  end if;
+
+  delete from public.saved_searches where user_id = uid;
+  delete from public.shared_collections where user_id = uid;
+  delete from public.reading_list where user_id = uid;
+  delete from auth.users where id = uid;
+end;
+$$;
+
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;
+
+-- ── The weekly schedule ──────────────────────────────────────────────────────
+-- Run this only after the function is deployed and its secrets are set. Replace
+-- YOUR_PROJECT_REF and YOUR_CRON_SECRET with your own values.
+--
+-- create extension if not exists pg_cron;
+-- create extension if not exists pg_net;
+--
+-- select cron.schedule('evidence-desk-weekly-alerts', '0 8 * * 1', $job$
+--   select net.http_post(
+--     url     := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/weekly-alerts',
+--     headers := '{"Content-Type":"application/json","x-cron-secret":"YOUR_CRON_SECRET"}'::jsonb,
+--     body    := '{}'::jsonb
+--   );
+-- $job$);
+--
+-- To stop it:  select cron.unschedule('evidence-desk-weekly-alerts');

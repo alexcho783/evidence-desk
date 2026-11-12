@@ -208,6 +208,40 @@ window.EDAuth = {
     return data || [];
   },
 
+  /* ── N11: saved search alerts ───────────────────────────────────────────────
+     Row-level security does the work here as everywhere else: these all run as the signed
+     in person, and the database refuses anything that is not their own row. */
+
+  async saveSearch(query, source){
+    const uid = requireSession();
+    const { error } = await client.from("saved_searches").insert({
+      user_id: uid, query: String(query || "").slice(0, 300), source: source || "med"
+    });
+    if (error) throw new Error(friendly(error));
+  },
+
+  async myAlerts(){
+    if (!client || !session) return [];
+    const { data, error } = await client.from("saved_searches")
+      .select("id, query, source, paused, last_run").order("created_at", { ascending: false });
+    if (error) return [];
+    return data || [];
+  },
+
+  async setAlertPaused(id, paused){
+    const uid = requireSession();
+    const { error } = await client.from("saved_searches")
+      .update({ paused: !!paused }).eq("user_id", uid).eq("id", id);
+    if (error) throw new Error(friendly(error));
+  },
+
+  async deleteAlert(id){
+    const uid = requireSession();
+    const { error } = await client.from("saved_searches")
+      .delete().eq("user_id", uid).eq("id", id);
+    if (error) throw new Error(friendly(error));
+  },
+
   async remove(id){
     const uid = requireSession();
     const { error } = await client.from("reading_list")

@@ -288,6 +288,7 @@ const S = {
   pico:{p:"", i:"", c:"", o:""},
   compare:{open:false, q:"", key:"", data:null, busy:false, err:false},
   shared:null,      /* a read-only collection opened from a link */
+  alerts:{list:[], loaded:false, busy:false},
   sharing:{open:false, busy:false, slug:"", withNotes:false, note:""},
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
@@ -2165,6 +2166,8 @@ function renderSearch(){
             <p>National guidance is often not indexed in MEDLINE, so the Guideline row here under-counts it. These open a search elsewhere.</p>
           </div>` : ""}
         </span>` : ""}
+        ${S.account.user && window.EDAuth && window.EDAuth.saveSearch ? `<button class="btn btn-sm" id="alert-me" type="button"
+          title="Be emailed once a week when a new synthesis or trial matches this">${svg("i-retry")}Alert me</button>` : ""}
         ${S.source === "med" ? `<button class="btn btn-sm" id="cmp-open" type="button"
           title="Put a second question's evidence map beside this one">${svg("i-link")}Compare</button>` : ""}
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
@@ -2261,6 +2264,30 @@ function integrityBanner(all){
 
 /* The share control. Notes are a separate, unticked choice, because a note is the one
    thing in a reading list written for nobody else. */
+/* The alerts someone has saved, with the two controls that matter: stop it for now, and
+   get rid of it. Shown with the reading list because that is where an account's things
+   are, rather than behind a settings page nobody opens. */
+function alertsPanel(){
+  const A = window.EDAuth;
+  if (!A || !A.myAlerts || !S.account.user) return "";
+  if (!S.alerts.loaded && !S.alerts.busy) {
+    S.alerts.busy = true;
+    A.myAlerts().then(list => { S.alerts = {list, loaded:true, busy:false}; render(); })
+                .catch(() => { S.alerts = {list:[], loaded:true, busy:false}; });
+  }
+  if (!S.alerts.list.length) return "";
+  return `<div class="alerts">
+    <div class="pin-head">${svg("i-retry")}<b>Weekly alerts</b>
+      <span>a new synthesis or trial matching one of these is emailed to you once a week</span></div>
+    ${S.alerts.list.map(a => `<div class="alert-row">
+      <button class="alert-q" type="button" data-ex="${esc(a.query)}" title="Run this search">${esc(a.query)}</button>
+      <span class="alert-when">${a.paused ? "paused" : a.last_run ? "last checked " + esc(String(a.last_run).slice(0, 10)) : "not run yet"}</span>
+      <button class="btn btn-sm btn-quiet" type="button" data-alert-pause="${esc(a.id)}">${a.paused ? "Resume" : "Pause"}</button>
+      <button class="btn btn-sm btn-quiet" type="button" data-alert-del="${esc(a.id)}">${svg("i-trash")}Delete</button>
+    </div>`).join("")}
+  </div>`;
+}
+
 function sharePanel(){
   const sg = S.sharing;
   if (!sg.open) return "";
@@ -2311,6 +2338,7 @@ function renderList(){
     ${syncBanner()}
     ${integrityBanner(all)}
     ${sharePanel()}
+    ${alertsPanel()}
     <div class="filters" style="padding-bottom:16px;border-bottom:1px solid var(--line-soft);margin-top:16px">
       <label class="sr" for="f-coll">Collection</label>
       <select class="sel" id="f-coll">
@@ -2761,10 +2789,18 @@ function renderPrivacy(){
     <p>Signing in is optional and exists for one reason: so your reading list follows you to another
       device. If you sign in, two things are stored on a server:</p>
     <ul>
-      <li>Your <b>email address</b>, used only to identify you and send sign-in links. No marketing, ever.</li>
+      <li>Your <b>email address</b>, used to identify you, to send sign-in links, and to send any
+        weekly alert you set up yourself. No marketing, ever.</li>
       <li>The <b>papers you save</b>, with your notes, tags and reading status.</li>
+      <li>Any <b>search you ask to be alerted about</b>, which is kept so it can be rerun once a
+        week, along with what it last returned so you are not told about the same paper twice.
+        This is the one exception to "your searches are not recorded", it exists only because you
+        asked for it, and pausing or deleting the alert ends it.</li>
+      <li>Any <b>collection you choose to share</b>, as a copy that anyone with the link can read.
+        Notes are left out unless you tick the box that includes them. Withdrawing the link
+        deletes the copy.</li>
     </ul>
-    <p>That is the whole list. Your searches are still not recorded. The data sits in a
+    <p>That is the whole list. Searches you simply run are still not recorded. The data sits in a
       <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a> database, and a
       row-level security policy means the database itself refuses to return one person's rows to
       another — the separation is enforced where the data lives, not by the code in your browser.</p>
@@ -3128,7 +3164,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,#coll-share,#share-go,#share-cancel,#share-copy,#share-stop,#copy-shared,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,[data-alert-pause],[data-alert-del],#alert-me,#coll-share,#share-go,#share-cancel,#share-copy,#share-stop,#copy-shared,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -3145,6 +3181,28 @@ document.addEventListener("click", (ev) => {
   if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
   if (t.id === "guide-pick") { S.guideMenu = !S.guideMenu; render(); return; }
   if (t.id === "builder-toggle") { S.builder = !S.builder; render(); return; }
+  if (t.id === "alert-me") {
+    const A = window.EDAuth;
+    if (!A || !A.saveSearch) return;
+    A.saveSearch(S.lastQ || S.q, S.source)
+      .then(() => { S.alerts.loaded = false; toast("Saved. You will be emailed once a week when something new matches."); })
+      .catch(e => toast((e && e.message) || "Could not save that search."));
+    return;
+  }
+  if (t.dataset.alertPause) {
+    const A = window.EDAuth, id = t.dataset.alertPause;
+    const row = S.alerts.list.find(x => x.id === id);
+    if (!A || !row) return;
+    row.paused = !row.paused; render();
+    A.setAlertPaused(id, row.paused).catch(() => { row.paused = !row.paused; render(); toast("That did not save."); });
+    return;
+  }
+  if (t.dataset.alertDel) {
+    const A = window.EDAuth, id = t.dataset.alertDel;
+    S.alerts.list = S.alerts.list.filter(x => x.id !== id); render();
+    if (A) A.deleteAlert(id).catch(() => { S.alerts.loaded = false; toast("That did not delete."); });
+    return;
+  }
   if (t.id === "coll-share") { S.sharing = {open:true, busy:false, slug:"", withNotes:false, note:""}; render(); return; }
   if (t.id === "share-cancel") { S.sharing = {open:false, busy:false, slug:"", withNotes:false, note:""}; render(); return; }
   if (t.id === "share-copy") {

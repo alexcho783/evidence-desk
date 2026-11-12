@@ -281,6 +281,58 @@ altogether.
 
 **6. Set `contactEmail`** so the privacy page can tell people who holds their data.
 
+### Shared collections and weekly alerts: not deployed
+
+Two account features are written but inert until you run the steps below yourself. Nothing
+in this repository has been applied to a live Supabase project.
+
+**Shared collections (N12)** need only the new table. Re-run `supabase-setup.sql` in the
+SQL editor: it is written to be safe to run more than once, and it adds
+`shared_collections`, its policies, and a `delete_my_account()` that also clears shared
+rows. Then check, while **signed out**, that the private table is still private:
+
+```sql
+select count(*) from public.reading_list;
+```
+
+That must return 0 rows, not an error and not your papers. If it returns rows, stop and
+fix the policies before sharing anything.
+
+**Weekly alerts (N11)** need the table, a function, three secrets and a schedule. The table
+comes from the same `supabase-setup.sql` run. Then, with the
+[Supabase CLI](https://supabase.com/docs/guides/cli) installed and logged in:
+
+```bash
+supabase link --project-ref YOUR_PROJECT_REF
+```
+
+```bash
+supabase secrets set RESEND_API_KEY=your_resend_key CRON_SECRET=$(openssl rand -hex 24) ALERT_FROM="Evidence Desk <alerts@yourdomain>" SITE_URL="https://yourname.github.io/evidence-desk/"
+```
+
+```bash
+supabase functions deploy weekly-alerts --no-verify-jwt
+```
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to the function automatically;
+do not set them yourself and never put the service role key anywhere near `config.js`. The
+`--no-verify-jwt` is why the function checks `x-cron-secret` itself: without that header it
+answers 401 and sends nothing, so the endpoint being reachable does not make it usable.
+
+Test it once by hand before scheduling it, using the same secret you just generated:
+
+```bash
+curl -i -X POST -H "x-cron-secret: YOUR_CRON_SECRET" https://YOUR_PROJECT_REF.supabase.co/functions/v1/weekly-alerts
+```
+
+It should answer `{"checked":0,"sent":0}` with no saved searches, and 401 if you omit the
+header. Only then uncomment and run the `cron.schedule` block at the bottom of
+`supabase-setup.sql`, with your own project ref and secret filled in.
+
+Switching alerts on means holding someone's email address for a reason beyond signing them
+in, and keeping the text of searches they asked to be alerted about. The privacy page
+already says both; keep it accurate if you change what is stored.
+
 ### If you switch accounts on, you take on data protection duties
 
 Storing other people's email addresses and reading lists makes you a data controller under UK
