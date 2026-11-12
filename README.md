@@ -1,9 +1,18 @@
 # Conspectus — public edition
 
-Formerly Evidence Desk. The rename is cosmetic: the repository folder, the GitHub remote and
-the published URL are unchanged, and so are the browser storage keys, so nobody loses a
-reading list over it. Renaming those is a separate decision, and the live URL breaks the
-moment it is taken.
+Formerly Evidence Desk. The repository and the published site moved with the name, so the
+address is now `https://alexcho783.github.io/conspectus/`. **The old Pages URL is dead and
+will not redirect**: GitHub redirects a renamed repository's issues, stars and git
+operations, but project site URLs are the documented exception, so anything still pointing
+at `/evidence-desk/` gets a 404.
+
+Two things deliberately did not move. The browser storage keys are still `ed-*`, because
+renaming them would orphan every reading list, note and collection that anyone has saved,
+on every device, in exchange for tidiness nobody can see. And the local working folder is
+still `evidence-desk-web`, which is cosmetic and costs nothing to leave.
+
+Never create a new repository called `evidence-desk` under this account. GitHub warns that
+reusing a renamed repository's old name silently breaks the redirects for everything else.
 
 A medical literature search that sorts what it finds by **what kind of study each paper is**,
 rather than only by relevance. Every result is placed on a grid: study-design strength down the
