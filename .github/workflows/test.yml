@@ -1,0 +1,27 @@
+# Runs the classifier tests on every push and pull request.
+#
+# No install step and no lockfile, because the site ships no dependencies: the tests use
+# node:test and the committed fixture, so there is nothing to fetch and nothing to cache.
+# The fixture is refreshed by hand with tools/build-fixture.mjs, which is deliberately not
+# run here: CI should not depend on Europe PMC being up, or on its index shifting.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  node-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check every shipped script parses
+        run: for f in app.js classify.js cite.js auth.js config.js; do node --check "$f"; done
+
+      - name: Run the tests
+        run: node --test
