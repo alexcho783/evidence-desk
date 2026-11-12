@@ -305,6 +305,26 @@ test("findN says when the number is only a guess", () => {
   assert.equal(guess.n, 31);
   assert.equal(guess.sure, false);
 
+  /* Abstracts spell small counts out as often as they write digits. */
+  for (const [t, nn] of [
+    ["Twenty-five participants were randomly assigned to each arm.", 25],
+    ["One hundred and twenty patients were enrolled across six centres.", 120],
+    ["Two hundred patients were recruited.", 200]
+  ]) {
+    const r = findN({abstractText: t});
+    assert.equal(r.n, nn, t.slice(0, 44));
+    assert.equal(r.sure, true, t.slice(0, 44));
+  }
+
+  /* Two groups in one sentence is a total nobody stated, and adding them up is a
+     judgement this should not make. "Forty-seven CMT1A and 18 HNPP patients" is 65
+     people; reporting the 47 would be the subgroup mistake in a new costume. */
+  const twoGroups = findN({abstractText: "Forty-seven CMT1A and 18 HNPP patients were included."});
+  assert.equal(twoGroups.sure, false, "a two-group count must never be reported as certain");
+
+  /* "forty years" is not forty people. */
+  assert.equal(findN({abstractText: "The author reflects on forty years in practice."}).n, null);
+
   /* Nothing found must never read as a small study. */
   const none = findN({abstractText: "The author reflects on forty years of practice."});
   assert.equal(none.n, null);

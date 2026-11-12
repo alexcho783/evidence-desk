@@ -257,7 +257,7 @@ const EXAMPLES = [
 
 const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections",
             counts:"ed-counts", integrity:"ed-integrity", tablecols:"ed-table-cols",
-            plotview:"ed-plot-view"};
+            plotview:"ed-plot-view", sidebar:"ed-sidebar"};
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -363,6 +363,28 @@ function toast(msg){
 }
 
 /* ══ Theme ═══════════════════════════════════════════ */
+
+/* The sidebar is useful and it is also 244px of a laptop screen. Remembered per browser,
+   like the theme, because it is a preference about this device rather than about the work. */
+(function sidebar(){
+  try {
+    if (store(LS.sidebar) === "off") document.body.dataset.side = "off";
+  } catch (e) {}
+  const btn = $("side-toggle");
+  if (!btn) return;
+  const sync = () => {
+    const off = document.body.dataset.side === "off";
+    btn.setAttribute("aria-expanded", off ? "false" : "true");
+    btn.title = btn.ariaLabel = off ? "Show the sidebar" : "Hide the sidebar";
+  };
+  sync();
+  btn.addEventListener("click", () => {
+    const off = document.body.dataset.side === "off";
+    if (off) delete document.body.dataset.side; else document.body.dataset.side = "off";
+    store(LS.sidebar, off ? "on" : "off");
+    sync();
+  });
+})();
 
 (function theme(){
   const t = store(LS.theme);
@@ -1391,6 +1413,70 @@ async function loadCompare(signal){
   if (S.compare.key !== key) return;
   S.compare = {...S.compare, data: failed ? null : data, busy:false, err: failed > 0};
   render();
+}
+
+/* ══ Refreshing a saved paper ═══════════════════════════════════════════════════════════
+ *
+ * A saved paper is a snapshot of what the site knew when you saved it. Fields added since
+ * are simply absent from it, which is how an evidence table ends up with an empty Funding
+ * column for papers that Europe PMC has funding for: the paper was saved by a build that
+ * did not collect it.
+ *
+ * So before an export, any saved paper missing something the table can show is looked up
+ * again and re-normalised through the current code. That also re-runs the current
+ * classifier and the current sample-size reader over it, so a paper saved a month ago is
+ * described the way a paper saved today would be.
+ *
+ * What is never overwritten: the note, the collections and the PICO boxes. Those are the
+ * reader's, not Europe PMC's.
+ */
+const KEEP_ON_REFRESH = ["note", "collections", "pico", "savedAt", "fromQuery",
+                         "integrityAt", "unpaywall"];
+
+function needsRefresh(p){
+  if (!p || p.source === "trials") return false;
+  /* `country` is the clearest marker, since nothing before this feature collected it. */
+  return p.country === undefined || p.nct === undefined || p.nSure === undefined;
+}
+
+async function refreshSaved(rows){
+  const stale = rows.filter(needsRefresh);
+  if (!stale.length) return 0;
+
+  const byId = new Map();
+  for (const p of stale) {
+    const ext = p.pmid || (p.epmcSource === "MED" ? p.epmcId : "");
+    if (ext) byId.set(String(ext), p);
+  }
+  if (!byId.size) return 0;
+
+  const ids = [...byId.keys()];
+  let fixed = 0;
+  for (let i = 0; i < ids.length; i += REF_BATCH) {
+    const batch = ids.slice(i, i + REF_BATCH);
+    const q = batch.map(x => `EXT_ID:${x}`).join(" OR ");
+    const p = new URLSearchParams({query:`(${q})`, format:"json", resultType:"core",
+                                   pageSize:String(batch.length)});
+    try {
+      const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}});
+      if (!r.ok) continue;
+      const d = await r.json();
+      for (const row of ((d.resultList && d.resultList.result) || [])) {
+        const old = byId.get(String(row.pmid || row.id));
+        if (!old) continue;
+        const fresh = normalise(row);
+        /* The id must not move, or the paper becomes a different saved paper. */
+        const merged = {...fresh, id: old.id};
+        for (const k of KEEP_ON_REFRESH) if (old[k] !== undefined) merged[k] = old[k];
+        S.list.set(old.id, merged);
+        const at = rows.indexOf(old);
+        if (at >= 0) rows[at] = merged;
+        fixed++;
+      }
+    } catch (e) { /* offline: the export goes ahead with what is stored */ }
+  }
+  if (fixed) persist({type:"bulk", items: [...S.list.values()].filter(x => !needsRefresh(x))});
+  return fixed;
 }
 
 /* ══ Integrity recheck ═══════════════════════════════════════════
@@ -2949,7 +3035,12 @@ async function exportPlotImage(){
 /* Exports check first. A reference entering someone's manuscript is the last moment this
    can be caught, and the one where getting it wrong costs most. */
 async function beforeExport(rows){
+  /* Symmetrical on purpose: BibTeX and RIS have no try/finally of their own, so if this
+     left the flag set their buttons would stay disabled for the rest of the session. */
+  S.exporting = true; render();
+  try { await refreshSaved(rows); } catch (e) {}
   try { await checkIntegrity(rows); } catch (e) {}
+  S.exporting = false; render();
 }
 
 async function exportTable(){

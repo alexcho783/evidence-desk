@@ -144,14 +144,21 @@ h1,h2,h3{text-wrap:balance; margin:0}
 /* ── Content column ─────────────────────────────── */
 .content{flex:1; display:flex; flex-direction:column; min-width:0}
 .topbar{
-  flex:0 0 auto; display:flex; align-items:center; gap:10px;
-  padding:11px max(16px, env(safe-area-inset-right,0px)) 11px max(16px, env(safe-area-inset-left,0px));
+  flex:0 0 auto; display:flex; align-items:center; gap:9px;
+  padding:6px max(14px, env(safe-area-inset-right,0px)) 6px max(14px, env(safe-area-inset-left,0px));
   background:var(--glass); backdrop-filter:blur(24px) saturate(1.4);
   -webkit-backdrop-filter:blur(24px) saturate(1.4);
   border-bottom:1px solid var(--line-soft);
 }
-.brand-compact{display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:-.015em}
-.brand-compact svg{width:22px; height:22px; color:var(--accent)}
+.brand-compact{display:flex; align-items:center; gap:7px; font-weight:600; font-size:14px;
+  letter-spacing:-.015em; white-space:nowrap}
+.brand-compact svg{width:19px; height:19px; color:var(--accent)}
+
+/* The sidebar toggle. Only on screens wide enough to have a sidebar to hide. */
+.side-toggle{display:none; align-items:center; justify-content:center; flex:0 0 auto;
+  width:30px; height:30px; border-radius:var(--r-s); color:var(--faint)}
+.side-toggle:hover{background:var(--surface-2); color:var(--ink)}
+.side-toggle svg{width:17px; height:17px}
 .scroll{flex:1; overflow-y:auto; overscroll-behavior:contain;
   padding:0 max(16px, env(safe-area-inset-right,0px)) 48px max(16px, env(safe-area-inset-left,0px))}
 .wrap{max-width:880px; margin:0 auto; padding-top:26px}
@@ -202,7 +209,7 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .field{
   flex:1; display:flex; align-items:center; gap:9px; min-width:0;
   background:var(--surface); border:1px solid var(--line); border-radius:999px;
-  padding:0 6px 0 13px; min-height:38px; transition:border-color .15s, box-shadow .15s;
+  padding:0 6px 0 13px; min-height:34px; transition:border-color .15s, box-shadow .15s;
 }
 .field:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
 .field svg{flex:0 0 16px; width:16px; height:16px; color:var(--faint)}
@@ -601,7 +608,13 @@ textarea.note:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accen
 @media (min-width:900px){
   .sidebar{display:flex}
   .brand-compact{display:none}
+  .side-toggle{display:flex}
   .tabbar{display:none !important}
   .wrap{padding-top:30px}
+
+  /* Sidebar collapsed. The product name moves into the top bar rather than vanishing,
+     so a collapsed window still says what it is. */
+  body[data-side="off"] .sidebar{display:none}
+  body[data-side="off"] .brand-compact{display:flex}
 }
 @media (max-width:899px){ .tabbar{display:flex} }

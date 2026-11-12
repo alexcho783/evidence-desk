@@ -43,6 +43,7 @@
   <symbol id="i-retry" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.6 5.9"/><path d="M20 4.5V11h-6.2"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></symbol>
   <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10.5 13.5a4 4 0 0 0 5.66 0l2.6-2.6a4 4 0 0 0-5.66-5.66l-1.3 1.3"/><path d="M13.5 10.5a4 4 0 0 0-5.66 0l-2.6 2.6a4 4 0 0 0 5.66 5.66l1.3-1.3"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M18.5 5.5l-1.4 1.4M6.9 17.1 5.5 18.5"/></symbol>
 </svg>
 
@@ -64,7 +65,10 @@
 
 <div class="content">
   <header class="topbar">
-    <button class="brand-compact" id="home-top" type="button" title="Start a new search"><svg aria-hidden="true"><use href="#i-mark"/></svg>Evidence&nbsp;Desk</button>
+    <button class="side-toggle" id="side-toggle" type="button" aria-label="Hide the sidebar" title="Hide the sidebar" aria-expanded="true">
+      <svg aria-hidden="true"><use href="#i-panel"/></svg>
+    </button>
+    <button class="brand-compact" id="home-top" type="button" title="Start a new search"><svg aria-hidden="true"><use href="#i-mark"/></svg>Conspectus</button>
     <label class="field">
       <svg aria-hidden="true"><use href="#i-search"/></svg>
       <span class="sr">Filter your reading list</span>

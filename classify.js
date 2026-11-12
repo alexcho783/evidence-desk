@@ -149,6 +149,37 @@ export function classify(r){
  * prompted this said "four phenotypes were identified: hypertensive pregnancy (n=494)" in a
  * study of 1,407 women, and the old version reported 494. Anything that drives a visual
  * marker has to know the difference between a total it read and a number it found. */
+/* Abstracts write small counts as words at least as often as digits: "Forty-seven CMT1A
+   and 18 HNPP patients were included" is one of each in a single sentence. Reading only
+   digits silently reported such a study as "not stated". Handles one to 999, which is the
+   range anyone spells out. */
+const ONES = {one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+  eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17,
+  eighteen:18, nineteen:19};
+const TENS = {twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90};
+const NUM_WORD = "(?:(?:one|two|three|four|five|six|seven|eight|nine)\\s+hundred(?:\\s+and)?\\s+)?"
+  + "(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\\s](?:one|two|three|four|five|six|seven|eight|nine))?"
+  + "|(?:one|two|three|four|five|six|seven|eight|nine)\\s+hundred"
+  + "|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
+  + "|ten|nine|eight|seven|six|five|four|three|two";
+
+function wordNumber(txt){
+  const t = String(txt || "").toLowerCase().replace(/[\u2010-\u2015]/g, "-");
+  let total = 0, hundreds = 0;
+  const m = t.match(/^(?:(one|two|three|four|five|six|seven|eight|nine)\s+hundred(?:\s+and)?\s*)?(.*)$/);
+  if (m && m[1]) hundreds = ONES[m[1]] * 100;
+  const rest = (m ? m[2] : t).trim();
+  if (!rest) return hundreds || null;
+  const parts = rest.split(/[-\s]+/).filter(Boolean);
+  for (const w of parts) {
+    if (TENS[w] != null) total += TENS[w];
+    else if (ONES[w] != null) total += ONES[w];
+    else return hundreds || null;
+  }
+  const v = hundreds + total;
+  return v > 1 ? v : null;
+}
+
 export function findN(r){
   const t = String(r.abstractText || "");
   const num = m => {
@@ -170,6 +201,16 @@ export function findN(r){
        between the number and the noun, which an earlier version did not allow for. */
     || num(t.match(/\b(?:among|of)\s+([\d,]{3,9})\s+(?:[a-z-]+\s+){0,2}(?:patients|participants|adults|women|men|children|individuals|subjects)\b/i));
   if (confident) return {n: confident, sure: true};
+
+  /* The same sentence shapes, with the count written as a word. */
+  const wordHit = t.match(new RegExp(
+    "\\b(" + NUM_WORD + ")\\s+(?:[a-z-]+\\s+){0,2}" +
+    "(?:patients|participants|subjects|individuals|adults|children|infants|women|men|cases)" +
+    "\\s*(?:\\([^)]{0,80}\\)\\s*)?(?:(?:were|was)\\s+(?:enrolled|randomi[sz]ed|randomly (?:assigned|allocated)|recruited|included|studied|followed|analy[sz]ed|referred|admitted|assessed|identified|screened)|underwent)", "i"));
+  if (wordHit) {
+    const v = wordNumber(wordHit[1]);
+    if (v) return {n: v, sure: true};
+  }
 
   /* Otherwise take what there is, and say it is not certain. Several different "n = "
      values in one abstract is the clearest sign the first one is a subgroup. */
