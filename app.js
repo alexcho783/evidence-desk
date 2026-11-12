@@ -118,13 +118,39 @@ const TIER_TYPE = {
 };
 const COUNT_CONCURRENCY = 6;   /* Europe PMC asks for no more than about 10 requests a second */
 
+/* B3: these filters used to send a PUB_TYPE query and nothing else, so a paper Europe PMC
+   had not indexed yet could not survive one, however plainly its own title said what it
+   was. Selecting "Trials only" quietly removed every recent trial.
+   Each filter now has two arms. The query is widened with title phrases so unindexed
+   records come back at all, and the rows are then kept only if the classifier agrees,
+   which is what stops "a commentary on the FOO trial" arriving under Trials only. The
+   interface calls the result "indexed plus inferred", because that is what it is. */
 const DESIGN_FILTERS = [
-  {k:"any",    label:"Any design",            q:""},
-  {k:"synth",  label:"Syntheses & guidelines", q:'(PUB_TYPE:"Meta-Analysis" OR PUB_TYPE:"Systematic Review" OR PUB_TYPE:"Practice Guideline")'},
-  {k:"trial",  label:"Trials only",            q:'(PUB_TYPE:"Randomized Controlled Trial" OR PUB_TYPE:"Clinical Trial")'},
-  {k:"obs",    label:"Observational only",     q:'(PUB_TYPE:"Observational Study")'},
-  {k:"case",   label:"Case reports only",      q:'(PUB_TYPE:"Case Reports")'}
+  {k:"any",    label:"Any design",             q:"", tiers:null},
+  {k:"synth",  label:"Syntheses & guidelines",
+   q:'(PUB_TYPE:"Meta-Analysis" OR PUB_TYPE:"Systematic Review" OR PUB_TYPE:"Practice Guideline"'
+     + ' OR TITLE:"systematic review" OR TITLE:"meta-analysis" OR TITLE:"meta analysis"'
+     + ' OR TITLE:"network meta-analysis" OR TITLE:"umbrella review" OR TITLE:"guideline"'
+     + ' OR TITLE:"consensus statement")',
+   tiers:["synthesis","guideline"]},
+  {k:"trial",  label:"Trials only",
+   q:'(PUB_TYPE:"Randomized Controlled Trial" OR PUB_TYPE:"Clinical Trial"'
+     + ' OR TITLE:"randomised" OR TITLE:"randomized" OR TITLE:"placebo-controlled"'
+     + ' OR TITLE:"double-blind" OR TITLE:"clinical trial")',
+   tiers:["trial"]},
+  {k:"obs",    label:"Observational only",
+   q:'(PUB_TYPE:"Observational Study" OR TITLE:"cohort" OR TITLE:"case-control"'
+     + ' OR TITLE:"cross-sectional" OR TITLE:"longitudinal")',
+   tiers:["cohort"]},
+  {k:"case",   label:"Case reports only",
+   q:'(PUB_TYPE:"Case Reports" OR TITLE:"case report" OR TITLE:"case series")',
+   tiers:["case"]}
 ];
+const designTiers = () => {
+  if (S.source !== "med") return null;      /* the dropdown is a Europe PMC filter only */
+  const d = DESIGN_FILTERS.find(x => x.k === S.design);
+  return d && d.tiers ? d.tiers : null;
+};
 
 /* Measured by test/classify.test.mjs against test/fixtures/medline-sample.json: how often
    the text-only guess matches the publication type a human indexer assigned. Update this
@@ -528,7 +554,8 @@ async function fetchOpenAlex(cursor, signal){
       .catch(e => { if (aborted(e)) throw e; throw {kind:"network"}; });
     if (!r.ok) throw {kind:"server", status:r.status};
     const dd = await r.json().catch(() => { throw {kind:"parse"}; });
-    return {rows:(dd.results || []).map(normalisePsy), hitCount:(dd.meta || {}).count || 0, next:null};
+    const hit = (dd.results || []).map(normalisePsy);
+    return {rows:hit, raw:hit.length, hitCount:(dd.meta || {}).count || 0, next:null};
   }
   p.set("search", S.q.trim());
   const filters = [PSYCH_FIELD];
@@ -555,8 +582,9 @@ async function fetchOpenAlex(cursor, signal){
   if (!res.ok) throw {kind:"server", status:res.status};
   let data;
   try { data = await res.json(); } catch(e) { throw {kind:"parse"}; }
+  const rows = (data.results || []).map(normalisePsy);
   return {
-    rows: (data.results || []).map(normalisePsy),
+    rows, raw: rows.length,
     hitCount: (data.meta && data.meta.count) || 0,
     next: (data.meta && data.meta.next_cursor) || null
   };
@@ -635,8 +663,9 @@ async function fetchTrials(cursor, signal){
   if (!res.ok) throw {kind:"server", status:res.status};
   let data;
   try { data = await res.json(); } catch(e) { throw {kind:"parse"}; }
+  const rows = (data.studies || []).map(normaliseTrial);
   return {
-    rows: (data.studies || []).map(normaliseTrial),
+    rows, raw: rows.length,
     hitCount: data.totalCount || 0,
     next: data.nextPageToken || null
   };
@@ -761,8 +790,18 @@ async function fetchPage(cursor, signal){
   if (!res.ok) throw {kind:"server", status:res.status};
   let data;
   try { data = await res.json(); } catch(e) { throw {kind:"parse"}; }
+  const want = S.cell ? null : designTiers();
+  const all = ((data.resultList && data.resultList.result) || []).map(normalise);
+  /* The widened query brings back records whose title merely mentions the design. The
+     classifier has already run on each row by this point, so it decides. */
+  const rows = want ? all.filter(p => want.includes(p.tier)) : all;
   return {
-    rows: ((data.resultList && data.resultList.result) || []).map(normalise),
+    rows,
+    /* `raw` is how many records the page held before the classifier dropped any. Whether
+       there is another page is a fact about Europe PMC's paging, not about how many rows
+       survived, and conflating the two ended the list after one short page. */
+    raw: all.length,
+    filtered: want ? all.length - rows.length : 0,
     hitCount: data.hitCount || 0,
     next: data.nextCursorMark || null
   };
@@ -890,7 +929,7 @@ async function runSearch(q, opts){
     S.results = r.rows;
     S.hitCount = r.hitCount;
     S.cursor = r.next;
-    S.exhausted = !r.next || r.rows.length < PAGE;
+    S.exhausted = !r.next || r.raw < PAGE;
     addRecent(q);
   } catch (e) {
     if (mine !== seq || aborted(e)) return;
@@ -963,7 +1002,7 @@ async function loadMore(){
     const seen = new Set(S.results.map(x => x.id));
     S.results = S.results.concat(r.rows.filter(x => !seen.has(x.id)));
     S.cursor = r.next;
-    S.exhausted = !r.next || r.rows.length < PAGE;
+    S.exhausted = !r.next || r.raw < PAGE;
   } catch (e) {
     if (mine !== seq || aborted(e)) return;
     toast("Couldn't load more results.");
@@ -1257,7 +1296,9 @@ function renderSearch(){
         <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
       <div class="list-head">
         <span class="list-h">${S.cell ? "One cell of the grid" : S.chainLabel ? "Related papers" : "Results"}</span>
-        <span class="list-n">${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above</span>
+        <span class="list-n">${designTiers() && !S.cell
+          ? `${S.results.length} shown · indexed plus inferred, from ${S.hitCount.toLocaleString()} records whose title or publication type matched`
+          : `${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above`}</span>
         <span style="flex:1"></span>
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
         <button class="btn btn-sm" id="save-all">${svg("i-plus")}Save all shown</button>
