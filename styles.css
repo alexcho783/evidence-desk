@@ -367,6 +367,9 @@ button.p-count{cursor:pointer}
 .p-cell[data-has-count="1"] .p-dot i{width:9px; height:9px}
 .plot-legend .lg[data-w="count"] i{background:none; border:1.5px solid var(--muted);
   border-radius:2px}
+/* The short note under the newest column head, saying that indexing lags publication. */
+.p-lag{display:block; font-size:9px; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--faint); opacity:.8}
 .plot-legend{display:flex; flex-wrap:wrap; gap:14px; padding:0 18px 16px;
   font-size:11.5px; color:var(--muted)}
 .lg{display:inline-flex; align-items:center; gap:6px}
@@ -406,6 +409,7 @@ button.p-count{cursor:pointer}
 .chip[data-k="posted"]{background:var(--strong-soft); color:var(--strong)}
 .chip[data-k="unposted"]{background:var(--weak-soft); color:var(--weak)}
 .chip[data-k="retracted"]{background:var(--weak); color:#fff; font-weight:700}
+.chip[data-k="map"]{background:transparent; border-color:var(--line); color:var(--faint)}
 .chip[data-k="retracted"] svg{width:11px; height:11px}
 .chip[data-k="preprint"]{background:var(--mid-soft); color:var(--mid)}
 .chip[data-k="nct"]{background:var(--accent-soft); color:var(--accent-ink)}

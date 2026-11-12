@@ -170,7 +170,8 @@ const EXAMPLES = [
   {tag:"Public",  q:"intensive blood pressure lowering dementia risk"}
 ];
 
-const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections"};
+const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections",
+            counts:"ed-counts"};
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -827,6 +828,18 @@ function cellQuery(tier, col){
 async function loadIndexed(signal){
   const key = indexedKey();
   if (!key || S.indexed.key === key) return;
+
+  /* Eighteen requests is cheap but not free, and going back to a search you ran a minute
+     ago is the common case. Session-scoped for the same reason the search history is: a
+     cache of what someone has been looking up should not outlive the browsing session. */
+  const cached = sessionStore(LS.counts + ":" + key);
+  if (cached && cached.data) {
+    S.indexed = {key, data: cached.data, busy:false, err:false};
+    if (cached.sample && cached.sample.length) mergeSample(cached.sample);
+    render();
+    return;
+  }
+
   const jobs = [];
   for (const t of Object.keys(TIER_TYPE))
     for (const c of ERA_COLS) jobs.push({t, c});
@@ -873,23 +886,26 @@ async function loadIndexed(signal){
   /* The sampled papers go in front of the relevance page, de-duplicated against it and
      against each other, highest cited first. Without this the grid can show 249 indexed
      trials while not one of them is listed, which is its own kind of dishonest. */
-  if (!failed && sample.length) {
-    /* The best of every cell first, in ladder order, then the second best of every cell,
-       and so on. Sorting the whole sample by citations instead would hand the top of the
-       list to the Review row, whose records out-cite everything: for the CMT1A query that
-       put "Physiology of Astroglia" above the ascorbic acid trials the search is for. */
-    sample.sort((a, b) => a.place - b.place || a.rank - b.rank || a.era - b.era
-                       || (b.citations || 0) - (a.citations || 0));
-    const seen = new Set(S.results.map(x => x.id));
-    const fresh = [];
-    for (const p of sample) {
-      if (seen.has(p.id)) continue;
-      seen.add(p.id); fresh.push(p);
-    }
-    S.sampled = fresh.length;
-    S.results = fresh.concat(S.results);
-  }
+  if (!failed && sample.length) mergeSample(sample);
+  if (!failed) sessionStore(LS.counts + ":" + key, {data, sample});
   render();
+}
+
+/* The best of every cell first, in ladder order, then the second best of every cell, and
+   so on. Sorting the whole sample by citations instead would hand the top of the list to
+   the Review row, whose records out-cite everything: for the CMT1A query that put
+   "Physiology of Astroglia" above the ascorbic acid trials the search is for. */
+function mergeSample(sample){
+  const ordered = sample.slice().sort((a, b) =>
+    a.place - b.place || a.rank - b.rank || a.era - b.era || (b.citations || 0) - (a.citations || 0));
+  const seen = new Set(S.results.map(x => x.id));
+  const fresh = [];
+  for (const p of ordered) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id); fresh.push(p);
+  }
+  S.sampled = fresh.length;
+  S.results = fresh.concat(S.results);
 }
 
 /* ══ Search flow ═══════════════════════════════════════════ */
@@ -905,6 +921,11 @@ const aborted = e => !!e && (e.name === "AbortError" || e.kind === "abort");
 async function runSearch(q, opts){
   const keepUrl = opts && opts.keepUrl;
   S.chainLabel = (opts && opts.chain) || "";
+  /* A chosen grid cell belongs to the search it was opened from. Only the cell itself, and
+     a link that carries one, may keep it; anything else, a new question, a changed filter,
+     a different source, drops it. Without this the cell silently went on filtering every
+     later search, and the grid stopped loading because it is skipped inside a cell. */
+  if (!(opts && opts.keepCell)) S.cell = null;
   q = (q || "").trim();
   if (!q) return;
 
@@ -1039,6 +1060,9 @@ function pushUrl(){
   if (S.openOnly) p.set("oa", "1");
   if (S.yearFrom) p.set("from", S.yearFrom);
   if (S.yearTo) p.set("to", S.yearTo);
+  /* A cell of the grid is part of what is being shown, so a link to it has to carry it or
+     the person you send it to sees a different set of papers from the one you meant. */
+  if (S.cell) p.set("cell", S.cell.t + "/" + S.cell.c);
   if (S.view !== "search") p.set("v", S.view);
   const url = location.pathname + (p.toString() ? "?" + p.toString() : "");
   history.pushState({}, "", url);
@@ -1052,6 +1076,9 @@ function readUrl(){
   S.openOnly = p.get("oa") === "1";
   S.yearFrom = /^\d{4}$/.test(p.get("from") || "") ? p.get("from") : "";
   S.yearTo = /^\d{4}$/.test(p.get("to") || "") ? p.get("to") : "";
+  const cell = String(p.get("cell") || "").split("/");
+  S.cell = (TIER_TYPE[cell[0]] && ERA_COLS.some(c => c.k === cell[1]))
+    ? {t: cell[0], c: cell[1]} : null;
   const v = p.get("v");
   S.view = (v === "list" || v === "about" || v === "privacy") ? v : "search";
 }
@@ -1060,6 +1087,13 @@ function readUrl(){
 
 function chips(p){
   const c = [`<span class="chip" data-k="tier">${esc(p.design)}${p.designSrc === "inferred" ? ` <span class="chip-inf">inferred</span>` : ""}</span>`];
+  /* A paper pulled out of a grid cell is not where the relevance list put it, so the card
+     says where it came from rather than leaving its position unexplained. */
+  if (p.fromCell && !S.cell) {
+    const [tk, ck] = p.fromCell.split("/");
+    const col = ERA_COLS.find(x => x.k === ck);
+    if (col) c.push(`<span class="chip" data-k="map" title="Among the most cited ${esc((tierMeta(tk).noun || ["record","records"])[1])} Europe PMC has indexed for this question in ${esc(col.label)}">${svg("i-mark")}From the map</span>`);
+  }
   if (p.retracted) c.push(`<span class="chip" data-k="retracted">${svg("i-alert")}Retracted</span>`);
   else if (p.concern) c.push(`<span class="chip" data-k="unposted">Expression of concern</span>`);
   if (p.erratum && !p.retracted) c.push(`<span class="chip">Corrected</span>`);
@@ -1142,8 +1176,14 @@ function plot(rows){
 
   let g = `<div class="p-corner"></div>`;
   columns.forEach((e, i) => {
-    g += `<div class="p-colhead" data-empty="${colHas[i] ? 0 : 1}">
-            <b>${esc(e.label)}</b><span>${colHas[i] ? esc(e.sub) : "none"}</span></div>`;
+    /* Publication types are assigned months after a paper appears, so the newest band is
+       always short of its true total. Saying so is the difference between a number that is
+       wrong and a number that is honest about which way it is wrong. */
+    const lag = e.k === "new" && S.indexed.data
+      ? " Indexing lags publication by months, so this column undercounts." : "";
+    g += `<div class="p-colhead" data-empty="${colHas[i] ? 0 : 1}"${lag ? ` title="${esc(lag.trim())}"` : ""}>
+            <b>${esc(e.label)}</b><span>${colHas[i] ? esc(e.sub) : "none"}</span>${
+            lag ? `<span class="p-lag" aria-hidden="true">undercounts</span>` : ""}</div>`;
   });
 
   /* Two layers, kept apart on purpose. The number is how many records Europe PMC has
@@ -2026,7 +2066,7 @@ document.addEventListener("click", (ev) => {
     if (!col) return;
     S.cell = {t: tier, c: colK};
     const noun = (tierMeta(tier).noun || ["record", "records"])[1];
-    runSearch(S.q || S.lastQ, {chain: `indexed ${noun} from ${col.label.toLowerCase()}`});
+    runSearch(S.q || S.lastQ, {chain: `indexed ${noun} from ${col.label.toLowerCase()}`, keepCell: true});
     return;
   }
   if (t.dataset.uncoll && S.open) {
@@ -2239,7 +2279,7 @@ document.addEventListener("keydown", (ev) => {
 
 window.addEventListener("popstate", () => {
   readUrl();
-  if (S.q && S.q !== S.lastQ) runSearch(S.q, {keepUrl:true});
+  if (S.q && S.q !== S.lastQ) runSearch(S.q, {keepUrl:true, keepCell: !!S.cell});
   else render();
 });
 
@@ -2248,7 +2288,7 @@ window.addEventListener("popstate", () => {
 loadList();
 readUrl();
 render();
-if (S.q) runSearch(S.q, {keepUrl:true});
+if (S.q) runSearch(S.q, {keepUrl:true, keepCell: !!S.cell});
 
 /* Accounts, when configured. The page is already rendered and usable by this point;
    signing in only ever adds to it. */
