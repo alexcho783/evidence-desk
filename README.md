@@ -295,29 +295,59 @@ rows. Then check, while **signed out**, that the private table is still private:
 select count(*) from public.reading_list;
 ```
 
-That must return 0 rows, not an error and not your papers. If it returns rows, stop and
-fix the policies before sharing anything.
+That must return 0 rows, not an error and not your papers. Then, still signed out:
 
-**Weekly alerts (N11)** need the table, a function, three secrets and a schedule. The table
-comes from the same `supabase-setup.sql` run. Then, with the
-[Supabase CLI](https://supabase.com/docs/guides/cli) installed and logged in:
+```sql
+select count(*) from public.shared_collections;
+```
+
+That must also return 0 or refuse. A shared collection is readable only through
+`get_shared_collection(slug)`, one row at a time, because a policy permissive enough to
+read someone's collection by slug would also let anyone holding the anon key list every
+shared collection on the site. If either query returns rows, stop and fix the policies
+before sharing anything.
+
+**Weekly alerts (N11)** need the table, a function, four secrets and a schedule. The table
+comes from the same `supabase-setup.sql` run.
+
+The CLI does not need installing globally and Docker is not required: Docker is only for
+running the whole Supabase stack locally, which this does not do. Every `supabase` command
+below can be run as `npx supabase ...` from the project folder.
 
 ```bash
-supabase link --project-ref YOUR_PROJECT_REF
+npx supabase login
 ```
 
 ```bash
-supabase secrets set RESEND_API_KEY=your_resend_key CRON_SECRET=$(openssl rand -hex 24) ALERT_FROM="Evidence Desk <alerts@yourdomain>" SITE_URL="https://yourname.github.io/evidence-desk/"
+npx supabase link --project-ref YOUR_PROJECT_REF
+```
+
+Generate the cron secret first and keep it somewhere you can paste from, because you need
+the same value twice, here and in the schedule:
+
+```bash
+openssl rand -hex 24
 ```
 
 ```bash
-supabase functions deploy weekly-alerts --no-verify-jwt
+npx supabase secrets set RESEND_API_KEY=your_resend_key CRON_SECRET=the_value_you_just_generated ALERT_FROM="Evidence Desk <alerts@yourdomain>" SITE_URL="https://alexcho783.github.io/evidence-desk/"
+```
+
+```bash
+npx supabase functions deploy weekly-alerts --no-verify-jwt
 ```
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to the function automatically;
-do not set them yourself and never put the service role key anywhere near `config.js`. The
-`--no-verify-jwt` is why the function checks `x-cron-secret` itself: without that header it
-answers 401 and sends nothing, so the endpoint being reachable does not make it usable.
+do not set them yourself and never put the service role key anywhere near `config.js`.
+
+`--no-verify-jwt` makes the endpoint reachable without a Supabase key, which is why the
+function checks `x-cron-secret` itself and answers 401 without it. That secret is the only
+gate on a function that can send email, so make it long, keep it out of the repository, and
+do not reuse it anywhere else.
+
+`ALERT_FROM` has to be an address at a domain you have verified with Resend. Their sandbox
+sender only delivers to your own address, which is enough to test with and not enough to
+run with.
 
 Test it once by hand before scheduling it, using the same secret you just generated:
 

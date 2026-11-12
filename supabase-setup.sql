@@ -120,16 +120,27 @@ alter table public.shared_collections
 
 alter table public.shared_collections enable row level security;
 
+-- Supabase grants these by default on new tables in public; stated explicitly so this file
+-- still does the right thing in a project where the default privileges were changed.
+grant select, insert, update, delete on public.shared_collections to authenticated;
+revoke all on public.shared_collections from anon;
+
 drop policy if exists "anyone reads shared"    on public.shared_collections;
+drop policy if exists "read own shared"        on public.shared_collections;
 drop policy if exists "insert own shared"      on public.shared_collections;
 drop policy if exists "update own shared"      on public.shared_collections;
 drop policy if exists "delete own shared"      on public.shared_collections;
 
--- The one deliberately public read in this schema. It is safe because a row only exists
--- here if its owner asked for it to exist, and because the row holds a copy rather than a
--- reference: there is nothing to follow back into anyone's private data.
-create policy "anyone reads shared" on public.shared_collections
-  for select using (true);
+-- NO public select policy, deliberately. An earlier draft of this file had
+-- `for select using (true)`, which is wrong in a way that is easy to miss: PostgREST
+-- exposes every table, so `using (true)` would let anyone holding the anon key run
+-- `select * from shared_collections` and read EVERY shared collection on the site. The
+-- slug is supposed to be the secret, and a table you can list is not a secret.
+--
+-- Reading a shared collection therefore goes through one function that takes a slug and
+-- returns at most one row. There is no way to ask it for a list.
+create policy "read own shared" on public.shared_collections
+  for select using (auth.uid() = user_id);
 
 create policy "insert own shared" on public.shared_collections
   for insert with check (auth.uid() = user_id);
@@ -139,6 +150,25 @@ create policy "update own shared" on public.shared_collections
 
 create policy "delete own shared" on public.shared_collections
   for delete using (auth.uid() = user_id);
+
+-- The only way in from outside. security definer so it can read past the owner-only policy
+-- above, and it is written so that the only thing it can ever return is the single row
+-- whose slug you already knew.
+create or replace function public.get_shared_collection(want_slug text)
+returns table (slug text, name text, papers jsonb, with_notes boolean)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select s.slug, s.name, s.papers, s.with_notes
+  from public.shared_collections s
+  where s.slug = want_slug
+  limit 1;
+$$;
+
+revoke all on function public.get_shared_collection(text) from public;
+grant execute on function public.get_shared_collection(text) to anon, authenticated;
 
 -- Account deletion has to take shared collections with it. Replacing the function rather
 -- than adding a second one keeps deletion a single transaction.
@@ -168,8 +198,14 @@ grant execute on function public.delete_my_account() to authenticated;
 -- select tablename, rowsecurity from pg_tables
 --   where tablename in ('reading_list','shared_collections');
 --
--- Check: the shared table should have exactly one policy whose cmd is SELECT.
+-- Check: the shared table's SELECT policy must NOT be `true`. It should read
+-- (auth.uid() = user_id). If qual is `true`, stop: anyone could list every shared
+-- collection on the site.
 -- select policyname, cmd, qual from pg_policies where tablename = 'shared_collections';
+--
+-- Check, while signed OUT, that a shared collection cannot be listed. Should return 0 rows
+-- or a permission error, never somebody's collection:
+-- select count(*) from public.shared_collections;
 --
 -- Check, while signed OUT, that the private table is still private. Should return 0 rows:
 -- select count(*) from public.reading_list;

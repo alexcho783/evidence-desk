@@ -190,15 +190,18 @@ window.EDAuth = {
     if (error) throw new Error(friendly(error));
   },
 
-  /* Readable signed out, which is the point. Returns null when the link is wrong or the
-     owner has withdrawn it. */
+  /* Readable signed out, which is the point, and only one row at a time. This goes through
+     a function rather than selecting from the table because the table must not be
+     listable: a policy permissive enough to read anyone's shared collection by slug is
+     also permissive enough to read all of them at once. See supabase-setup.sql. */
   async openShared(slug){
     if (!client) return null;
-    const { data, error } = await client.from("shared_collections")
-      .select("slug, name, papers, with_notes").eq("slug", slug).maybeSingle();
-    if (error || !data) return null;
-    return { slug: data.slug, name: data.name, withNotes: !!data.with_notes,
-             papers: Array.isArray(data.papers) ? data.papers : [] };
+    const { data, error } = await client.rpc("get_shared_collection", { want_slug: slug });
+    if (error) return null;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
+    return { slug: row.slug, name: row.name, withNotes: !!row.with_notes,
+             papers: Array.isArray(row.papers) ? row.papers : [] };
   },
 
   async mySharedSlugs(){
