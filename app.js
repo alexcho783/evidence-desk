@@ -129,6 +129,16 @@ const COUNT_CONCURRENCY = 6;   /* Europe PMC asks for no more than about 10 requ
    people recruited, and only when the sample size was read confidently. An unknown sample
    must never look small. */
 const SMALL_N = 50;
+
+/* N18. Four optional boxes a reader fills in themselves. The site does not and will not
+   infer these: deciding what a study's population or comparator was is a reading of the
+   paper, not something its metadata says. */
+const PICO = [
+  {k:"p", label:"Population",   hint:"adults with HFrEF"},
+  {k:"i", label:"Intervention", hint:"dapagliflozin 10 mg"},
+  {k:"c", label:"Comparison",   hint:"placebo"},
+  {k:"o", label:"Outcome",      hint:"CV death or HF hospitalisation"}
+];
 const PRIMARY_TIERS = ["trial","cohort","case","experiment","survey","qualitative",
                        "phase1","phase2","phase3","phase4","obsreg"];
 const isSmall = p => p && p.nSure === true && typeof p.n === "number" && p.n < SMALL_N
@@ -187,7 +197,7 @@ const EXAMPLES = [
 ];
 
 const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections",
-            counts:"ed-counts", integrity:"ed-integrity"};
+            counts:"ed-counts", integrity:"ed-integrity", tablecols:"ed-table-cols"};
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -210,6 +220,8 @@ const S = {
   refsNote:"",      /* what a reference list is missing, in words, or "" when it is whole */
   integrity:{busy:false, ran:false, newly:[]},   /* the Crossref retraction recheck */
   startHere:{key:"", cochrane:null, other:null, busy:false},  /* the pinned syntheses */
+  tableCols:["design","n","note"],   /* which evidence table columns to export */
+  colPicker:false,
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -309,6 +321,8 @@ function loadList(){
      behind by those versions before reading the session-scoped copy. */
   try { localStorage.removeItem(LS.recent); } catch(e){}
   S.recent = sessionStore(LS.recent) || [];
+  const savedCols = store(LS.tablecols);
+  if (Array.isArray(savedCols) && savedCols.length) S.tableCols = savedCols;
 }
 function saveList(){ store(LS.list, [...S.list.values()]); }
 
@@ -729,6 +743,24 @@ function buildQuery(){
   return parts.filter(Boolean).join(" AND ");
 }
 
+/* Affiliations are free text and Europe PMC does not parse them, so this is a guess: the
+   last comma-separated piece of the first author's affiliation, kept only when it looks
+   like a place rather than a postcode or a department. Everything that shows it calls it
+   the first author's country, and nothing counts or aggregates it. */
+const COUNTRY_TAIL = /^[A-Za-z .'\u2019-]{3,34}$/;
+function firstCountry(r){
+  const a = (((r.authorList || {}).author) || [])[0] || {};
+  const aff = (((a.authorAffiliationDetailsList || {}).authorAffiliation || [])[0] || {}).affiliation
+    || r.affiliation || "";
+  if (!aff) return "";
+  /* Author initials in brackets are commas inside a comma-separated list, so they have to
+     go before the split: "University of Glasgow, Glasgow, United Kingdom (J.J.V.M., M.C.P.)". */
+  const flat = String(aff).replace(/\([^)]*\)/g, " ").split(/;/)[0];
+  const tail = flat.split(/,\s*/).map(x => x.trim()).filter(Boolean).pop() || "";
+  const cleaned = tail.replace(/\.$/, "").replace(/\s+/g, " ").trim();
+  return COUNTRY_TAIL.test(cleaned) ? cleaned : "";
+}
+
 function normalise(r){
   r = {...r, title: plain(dec(r.title)), abstractText: dec(r.abstractText)};
   const ptypes = new Set((((r.pubTypeList || {}).pubType) || []).map(t => String(t).toLowerCase()));
@@ -777,6 +809,9 @@ function normalise(r){
     epmcId: r.id || "",
     epmcSource: r.source || "MED",
     /* Who paid. Not a verdict, but it belongs beside a design label. */
+    /* The first author's affiliation, trimmed to its last comma-separated part, which is
+       usually but not always the country. Labelled as approximate wherever it is shown. */
+    country: firstCountry(r),
     grants: ((((r.grantsList || {}).grant) || []).map(g => dec(g.agency || "")).filter(Boolean))
       .filter((v, i, a) => a.indexOf(v) === i).slice(0, 4),
     freeFullText: (freeAny && freeAny.url) || "",
@@ -1952,8 +1987,15 @@ function renderList(){
       </select>
       <button class="btn btn-sm btn-primary" id="export-docx" type="button" ${S.exporting ? "disabled" : ""}>
         ${svg("i-down")}${S.exporting ? "Building…" : "References"}</button>
-      <button class="btn btn-sm" id="export-table" type="button" ${S.exporting ? "disabled" : ""}>
-        ${svg("i-down")}Evidence table</button>
+      <span class="colwrap">
+        <button class="btn btn-sm" id="export-table" type="button" ${S.exporting ? "disabled" : ""}>
+          ${svg("i-down")}Evidence table</button>
+        <button class="btn btn-sm btn-quiet" id="col-pick" type="button"
+          aria-expanded="${S.colPicker ? "true" : "false"}" title="Choose the columns">${S.tableCols.length} columns${svg("i-chev")}</button>
+        ${S.colPicker ? `<div class="colmenu">${(EDCITE().TABLE_COLS || []).map(c =>
+          `<label><input type="checkbox" data-col="${esc(c.k)}"${S.tableCols.includes(c.k) ? " checked" : ""}> ${esc(c.h)}</label>`
+        ).join("")}<p>Study, with author, year and title, is always the first column.</p></div>` : ""}
+      </span>
       <button class="btn btn-sm" data-export="bib">${svg("i-down")}BibTeX</button>
       <button class="btn btn-sm" data-export="ris">${svg("i-down")}RIS</button>
       <span style="flex:1"></span>
@@ -2211,6 +2253,14 @@ function renderSheet(){
           <datalist id="coll-list">${collNames().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>
           <button class="btn btn-sm" type="submit">Add</button>
         </form>
+
+        <div class="sh-head">For the evidence table</div>
+        <p class="sh-note" style="margin-bottom:8px">Optional. These four go into the evidence table export as their own columns, so a review's "characteristics of included studies" table needs less editing afterwards.</p>
+        <div class="picogrid">${PICO.map(f => `<label class="pico">
+          <span>${esc(f.label)}</span>
+          <input id="pico-${esc(f.k)}" data-pico="${esc(f.k)}" maxlength="120"
+            placeholder="${esc(f.hint)}" value="${esc((p.pico || {})[f.k] || "")}" autocomplete="off">
+        </label>`).join("")}</div>
 
         <div class="sh-head">Your note</div>
         <textarea class="note" id="note" placeholder="What this paper shows, what you doubt, how it connects to the rest.">${esc(p.note || "")}</textarea>
@@ -2572,7 +2622,7 @@ async function exportTable(){
   S.exporting = true; render();
   try {
     const name = S.coll === "all" ? "Evidence table" : S.coll;
-    downloadBlob(slug(name) + "-table.docx", await cite.toTableDocxBlob(name, rows));
+    downloadBlob(slug(name) + "-table.docx", await cite.toTableDocxBlob(name, rows, S.tableCols));
     toast(`Evidence table exported with ${rows.length} stud${rows.length === 1 ? "y" : "ies"}.`);
   } catch (e) {
     toast("Couldn't build the table — the export library didn't load.");
@@ -2657,7 +2707,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#col-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -2671,6 +2721,7 @@ document.addEventListener("click", (ev) => {
   if (t.id === "wipe-no")  { S.account.confirmWipe = false; render(); return; }
   if (t.id === "wipe-yes") { deleteAccount(); return; }
   if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
+  if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
   if (t.hasAttribute("data-cell")) {
     const [tier, colK] = t.dataset.cell.split("/");
     const col = ERA_COLS.find(c => c.k === colK);
@@ -2863,6 +2914,13 @@ document.addEventListener("submit", (ev) => {
 
 document.addEventListener("input", (ev) => {
   const el = ev.target;
+  if (el.dataset && el.dataset.pico) {
+    const p = S.open && S.list.get(S.open.id);
+    if (p) { p.pico = {...(p.pico || {}), [el.dataset.pico]: el.value.trim()};
+             if (S.open) S.open.pico = p.pico;
+             persist({type:"upsert", item:p}); }
+    return;
+  }
   if (el.id === "q") {
     S.q = el.value;
     /* The hint goes as soon as they start typing, by removing the node rather than
@@ -2879,6 +2937,17 @@ document.addEventListener("input", (ev) => {
 
 document.addEventListener("change", (ev) => {
   if (ev.target.id === "f-coll")  { S.coll = ev.target.value; S.renaming = false; S.confirmColl = false; render(); return; }
+  if (ev.target.dataset && ev.target.dataset.col) {
+    const k = ev.target.dataset.col;
+    S.tableCols = ev.target.checked ? [...new Set([...S.tableCols, k])] : S.tableCols.filter(x => x !== k);
+    store(LS.tablecols, S.tableCols);
+    /* No render. A render rebuilds the list view, which closes this menu and throws away
+       the checkbox the pointer is over, so a second tick lands on nothing. Only the count
+       on the button needs to change. */
+    const btn = $("col-pick");
+    if (btn) btn.firstChild.nodeValue = `${S.tableCols.length} columns`;
+    return;
+  }
   if (ev.target.id === "f-style") { S.citeStyle = ev.target.value; render(); return; }
   const el = ev.target;
   if (el.id === "f-design") { S.design = el.value; if (S.lastQ) runSearch(S.lastQ); }

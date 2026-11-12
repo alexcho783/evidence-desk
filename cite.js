@@ -285,9 +285,30 @@ async function toDocxBlob(name, rows, styleKey){
 /* An evidence table is the skeleton of a literature review: one row per study, with the
    things you have to compare it on. Landscape, because four columns of prose is not a
    portrait shape. */
-async function toTableDocxBlob(name, rows){
+/* Every column the evidence table can carry. `want` is the set the caller asked for, so a
+   table only shows what someone is actually going to fill in or read. Most of these were
+   already being collected and thrown away at export time. */
+const TABLE_COLS = [
+  {k:"design",   h:"Design",       get: p => p.design || ""},
+  /* A sample size read out of prose is sometimes a subgroup rather than the total, and a
+     table that will be pasted into a manuscript should say which it is. */
+  {k:"n",        h:"Sample",       get: p => !p.n ? "not stated"
+                                        : p.nSure === false ? `${p.n} (unconfirmed)` : String(p.n)},
+  {k:"year",     h:"Year",         get: p => p.year ? String(p.year) : ""},
+  {k:"country",  h:"First author country", get: p => p.country || ""},
+  {k:"funding",  h:"Funding",      get: p => (p.grants || []).join(", ")},
+  {k:"reg",      h:"Registration", get: p => p.nct || ""},
+  {k:"p",        h:"Population",   get: p => (p.pico || {}).p || ""},
+  {k:"i",        h:"Intervention", get: p => (p.pico || {}).i || ""},
+  {k:"c",        h:"Comparison",   get: p => (p.pico || {}).c || ""},
+  {k:"o",        h:"Outcome",      get: p => (p.pico || {}).o || ""},
+  {k:"note",     h:"Your note",    get: p => p.note || ""}
+];
+
+async function toTableDocxBlob(name, rows, want){
   const d = await loadDocx();
   const sorted = order(rows, "vancouver");
+  const cols = TABLE_COLS.filter(c => !want || want.includes(c.k));
 
   const cell = (text, opts) => new d.TableCell({
     children: [new d.Paragraph({
@@ -299,7 +320,7 @@ async function toTableDocxBlob(name, rows){
 
   const header = new d.TableRow({
     tableHeader: true,
-    children: ["Study", "Design", "Sample", "Your note"].map(h => cell(h, {bold: true}))
+    children: ["Study", ...cols.map(c => c.h)].map(h => cell(h, {bold: true}))
   });
 
   const body = sorted.map(p => {
@@ -315,9 +336,7 @@ async function toTableDocxBlob(name, rows){
         ],
         margins: {top: 60, bottom: 60, left: 100, right: 100}
       }),
-      cell(p.design || ""),
-      cell(p.n ? String(p.n) : "not stated"),
-      cell(p.note || "")
+      ...cols.map(c => cell(c.get(p)))
     ]});
   });
 
@@ -328,13 +347,15 @@ async function toTableDocxBlob(name, rows){
         spacing: {after: 200}}),
       new d.Table({width: {size: 100, type: d.WidthType.PERCENTAGE}, rows: [header, ...body]}),
       new d.Paragraph({children: [new d.TextRun({
-        text: `${sorted.length} stud${sorted.length === 1 ? "y" : "ies"} · exported from Evidence Desk. Designs are as indexed, not as judged; check each one.`,
+        text: `${sorted.length} stud${sorted.length === 1 ? "y" : "ies"} · exported from Evidence Desk. Designs are as indexed, not as judged; check each one.`
+          + (cols.some(c => c.k === "country") ? " Country is the last part of the first author's affiliation, which is a guess, not a study location." : ""),
         size: 16, color: "888888"})], spacing: {before: 300}})
     ]
   }]});
   return d.Packer.toBlob(doc);
 }
 
-window.EDCite = { STYLES, format, plain, order, toDocxBlob, toTableDocxBlob, authors };
+window.EDCite = { STYLES, format, plain, order, toDocxBlob, toTableDocxBlob, authors,
+                  TABLE_COLS: TABLE_COLS.map(c => ({k: c.k, h: c.h})) };
 
 })();
