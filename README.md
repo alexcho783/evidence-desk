@@ -335,6 +335,14 @@ The CLI does not need installing globally and Docker is not required: Docker is 
 running the whole Supabase stack locally, which this does not do. Every `supabase` command
 below can be run as `npx supabase ...` from the project folder.
 
+`supabase init` comes first, because the CLI needs a `supabase/config.toml` and this
+repository has only the function folder. It will leave the existing
+`supabase/functions/` alone.
+
+```bash
+npx supabase init
+```
+
 ```bash
 npx supabase login
 ```
