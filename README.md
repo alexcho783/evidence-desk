@@ -310,7 +310,8 @@ That must print `[]`. If it prints rows, stop: the reading list is world-readabl
 curl -s "https://YOUR_PROJECT_REF.supabase.co/rest/v1/shared_collections?select=slug&limit=5" -H "apikey: YOUR_ANON_KEY"
 ```
 
-That must print a permission error, because `anon` is revoked from the table outright. A
+That must print a permission error, because `anon` is revoked from the table outright. The
+same is true of `saved_searches`. A
 shared collection is readable only through `get_shared_collection(slug)`, one row at a
 time: a policy permissive enough to read someone's collection by slug would also let
 anyone holding the anon key list every shared collection on the site.

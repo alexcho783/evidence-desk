@@ -261,6 +261,13 @@ create trigger saved_searches_cap_trigger before insert on public.saved_searches
 
 alter table public.saved_searches enable row level security;
 
+-- Belt and braces, matching shared_collections. Row-level security alone already returns
+-- nothing to an anonymous caller, because auth.uid() is null and no policy matches, but
+-- `anon` has no business reaching this table at all: only a signed-in person can own a
+-- saved search. Revoking the grant means a future policy mistake has nothing to act on.
+grant select, insert, update, delete on public.saved_searches to authenticated;
+revoke all on public.saved_searches from anon;
+
 drop policy if exists "read own searches"   on public.saved_searches;
 drop policy if exists "insert own searches" on public.saved_searches;
 drop policy if exists "update own searches" on public.saved_searches;
