@@ -130,6 +130,48 @@ const COUNT_CONCURRENCY = 6;   /* Europe PMC asks for no more than about 10 requ
    must never look small. */
 const SMALL_N = 50;
 
+/* N10. The same four letters, used for a different job: assembling a query. Terms inside a
+   box are alternatives and join with OR; the boxes join with AND. The result is written
+   into the ordinary search box where it can be read and edited, because a query a person
+   cannot see is one they cannot fix. The plain box stays the default.
+   A small synonym list, kept deliberately short and clinical. Suggesting a wrong synonym
+   silently widens someone's search without telling them, so this only offers, never
+   substitutes, and every suggestion is visible in the query before it runs. */
+const SYNONYMS = {
+  "heart failure": ["cardiac failure", "HFrEF", "HFpEF"],
+  "myocardial infarction": ["heart attack", "MI", "STEMI", "NSTEMI"],
+  "hypertension": ["high blood pressure", "raised blood pressure"],
+  "type 2 diabetes": ["T2DM", "non-insulin-dependent diabetes"],
+  "stroke": ["cerebrovascular accident", "cerebral infarction"],
+  "mortality": ["death", "survival", "fatal"],
+  "chronic kidney disease": ["CKD", "renal impairment"],
+  "depression": ["depressive disorder", "major depression"],
+  "anxiety": ["anxiety disorder", "generalised anxiety"],
+  "obesity": ["overweight", "body mass index"],
+  "pain": ["analgesia", "pain relief"],
+  "quality of life": ["QoL", "health-related quality of life"]
+};
+
+function synonymsFor(text){
+  const t = String(text || "").toLowerCase().trim();
+  if (!t) return [];
+  for (const key of Object.keys(SYNONYMS))
+    if (t === key || t.includes(key)) return SYNONYMS[key].filter(x => !t.includes(x.toLowerCase()));
+  return [];
+}
+
+/* Terms are split on commas, so "aspirin, clopidogrel" is two alternatives rather than one
+   odd phrase. Anything with a space is quoted, or Europe PMC reads it as two words. */
+function picoQuery(parts){
+  const arm = v => {
+    const terms = String(v || "").split(",").map(x => x.trim()).filter(Boolean)
+      .map(x => /\s/.test(x) ? `"${x.replace(/"/g, "")}"` : x);
+    if (!terms.length) return "";
+    return terms.length === 1 ? terms[0] : `(${terms.join(" OR ")})`;
+  };
+  return PICO.map(f => arm(parts[f.k])).filter(Boolean).join(" AND ");
+}
+
 /* N18. Four optional boxes a reader fills in themselves. The site does not and will not
    infer these: deciding what a study's population or comparator was is a reading of the
    paper, not something its metadata says. */
@@ -242,6 +284,8 @@ const S = {
   colPicker:false,
   guideMenu:false,
   plotView:"grid",   /* grid, or an exact-year timeline */
+  builder:false,     /* the PICO question builder, under the search box */
+  pico:{p:"", i:"", c:"", o:""},
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -1555,6 +1599,7 @@ function pushUrl(){
   /* A cell of the grid is part of what is being shown, so a link to it has to carry it or
      the person you send it to sees a different set of papers from the one you meant. */
   if (S.cell) p.set("cell", S.cell.t + "/" + S.cell.c);
+  for (const f of PICO) if (S.pico[f.k]) p.set("pico" + f.k, S.pico[f.k]);
   if (S.view !== "search") p.set("v", S.view);
   const url = location.pathname + (p.toString() ? "?" + p.toString() : "");
   history.pushState({}, "", url);
@@ -1568,6 +1613,13 @@ function readUrl(){
   S.openOnly = p.get("oa") === "1";
   S.yearFrom = /^\d{4}$/.test(p.get("from") || "") ? p.get("from") : "";
   S.yearTo = /^\d{4}$/.test(p.get("to") || "") ? p.get("to") : "";
+  let anyPico = false;
+  for (const f of PICO) {
+    const v = (p.get("pico" + f.k) || "").slice(0, 140);
+    S.pico[f.k] = v;
+    if (v) anyPico = true;
+  }
+  if (anyPico) S.builder = true;
   const cell = String(p.get("cell") || "").split("/");
   S.cell = (TIER_TYPE[cell[0]] && ERA_COLS.some(c => c.k === cell[1]))
     ? {t: cell[0], c: cell[1]} : null;
@@ -1850,6 +1902,21 @@ function renderSearch(){
       <textarea id="q" rows="2" placeholder="${esc(src().placeholder)}" autocomplete="off" enterkeyhint="search">${esc(S.q)}</textarea>
       <button class="btn-go" type="submit" aria-busy="${S.busy ? "true" : "false"}">${S.busy ? "Searching" : "Search"}</button>
     </div>
+    ${S.source === "med" ? `<button type="button" id="builder-toggle" class="buildlink"
+      aria-expanded="${S.builder ? "true" : "false"}">${S.builder ? "Hide the question builder" : "Build a question"}</button>` : ""}
+    ${S.builder && S.source === "med" ? `<div class="builder">
+      <p class="build-note">One idea per box. Separate alternatives with commas; they are joined with OR, and the boxes are joined with AND. The query appears in the search box above, where you can edit it.</p>
+      <div class="picogrid">${PICO.map(f => {
+        const syn = synonymsFor(S.pico[f.k]);
+        return `<label class="pico">
+          <span>${esc(f.label)}</span>
+          <input id="b-${esc(f.k)}" data-build="${esc(f.k)}" maxlength="140"
+            placeholder="${esc(f.hint)}" value="${esc(S.pico[f.k])}" autocomplete="off">
+          ${syn.length ? `<span class="synrow">also try ${syn.map(x =>
+            `<button type="button" data-syn="${esc(f.k)}|${esc(x)}">${esc(x)}</button>`).join(" ")}</span>` : ""}
+        </label>`;
+      }).join("")}</div>
+    </div>` : ""}
     <div class="filters">
       <div class="seg" role="group" aria-label="Which literature to search">
         ${Object.keys(SOURCES).map(k =>
@@ -2880,7 +2947,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -2896,6 +2963,15 @@ document.addEventListener("click", (ev) => {
   if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
   if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
   if (t.id === "guide-pick") { S.guideMenu = !S.guideMenu; render(); return; }
+  if (t.id === "builder-toggle") { S.builder = !S.builder; render(); return; }
+  if (t.dataset.syn) {
+    const [k, word] = t.dataset.syn.split("|");
+    const cur = S.pico[k].trim();
+    S.pico = {...S.pico, [k]: cur ? `${cur}, ${word}` : word};
+    S.q = picoQuery(S.pico);
+    render();
+    return;
+  }
   if (t.dataset.view2) { S.plotView = t.dataset.view2; store(LS.plotview, S.plotView); render(); return; }
   if (t.dataset.design) { S.guideMenu = false; S.design = t.dataset.design; runSearch(S.q || S.lastQ); return; }
   if (t.hasAttribute("data-cell")) {
@@ -3090,6 +3166,14 @@ document.addEventListener("submit", (ev) => {
 
 document.addEventListener("input", (ev) => {
   const el = ev.target;
+  if (el.dataset && el.dataset.build) {
+    S.pico = {...S.pico, [el.dataset.build]: el.value};
+    const q = picoQuery(S.pico);
+    S.q = q;
+    const box = $("q");
+    if (box && box.value !== q) box.value = q;     /* no render: it would steal the caret */
+    return;
+  }
   if (el.dataset && el.dataset.pico) {
     const p = S.open && S.list.get(S.open.id);
     if (p) { p.pico = {...(p.pico || {}), [el.dataset.pico]: el.value.trim()};
