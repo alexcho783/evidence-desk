@@ -170,7 +170,24 @@ const DESIGN_FILTERS = [
    tiers:["cohort"]},
   {k:"case",   label:"Case reports only",
    q:'(PUB_TYPE:"Case Reports" OR TITLE:"case report" OR TITLE:"case series")',
-   tiers:["case"]}
+   tiers:["case"]},
+  {k:"guide",  label:"Guidelines only",
+   q:'(PUB_TYPE:"Practice Guideline" OR PUB_TYPE:"Consensus Development Conference"'
+     + ' OR TITLE:"guideline" OR TITLE:"guidelines" OR TITLE:"consensus statement")',
+   tiers:["guideline"]}
+];
+
+/* N9. Most national guidance is not indexed in MEDLINE, so the Guideline row under-counts
+   it however good the classifier gets. Linking out is the honest answer: it sends people
+   to the body that publishes the guidance instead of pretending to contain it.
+   Both of these were checked by running a real search through them. SIGN is deliberately
+   absent: its ?keyword= parameter is ignored, and it returns the same page whatever you
+   ask for, so a link there would look like a search and not be one. */
+const GUIDE_SITES = [
+  {label:"NICE", note:"UK national guidance",
+   url: q => "https://www.nice.org.uk/search?q=" + encodeURIComponent(q)},
+  {label:"Trip", note:"guidelines from several countries",
+   url: q => "https://www.tripdatabase.com/search?criteria=" + encodeURIComponent(q)}
 ];
 const designTiers = () => {
   if (S.source !== "med") return null;      /* the dropdown is a Europe PMC filter only */
@@ -222,6 +239,7 @@ const S = {
   startHere:{key:"", cochrane:null, other:null, busy:false},  /* the pinned syntheses */
   tableCols:["design","n","note"],   /* which evidence table columns to export */
   colPicker:false,
+  guideMenu:false,
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -960,6 +978,12 @@ async function loadIndexed(signal){
    the Review row, whose records out-cite everything: for the CMT1A query that put
    "Physiology of Astroglia" above the ascorbic acid trials the search is for. */
 function mergeSample(sample){
+  /* The design filter applies to these too. They come from the grid, which deliberately
+     ignores the filter so the whole literature stays visible, but the list below it must
+     not: selecting "Guidelines only" was returning trials and case reports, because the
+     sampled papers went in without being asked. */
+  const want = designTiers();
+  if (want) sample = sample.filter(p => want.includes(p.tier));
   const ordered = sample.slice().sort((a, b) =>
     a.place - b.place || a.rank - b.rank || a.era - b.era || (b.citations || 0) - (a.citations || 0));
   const seen = new Set(S.results.map(x => x.id));
@@ -1842,6 +1866,15 @@ function renderSearch(){
           ? `${S.results.length} shown · indexed plus inferred, from ${S.hitCount.toLocaleString()} records whose title or publication type matched`
           : `${S.results.length} shown of ${S.hitCount.toLocaleString()} · ${strong} at trial level or above`}</span>
         <span style="flex:1"></span>
+        ${S.source === "med" ? `<span class="colwrap">
+          <button class="btn btn-sm" id="guide-pick" type="button" aria-expanded="${S.guideMenu ? "true" : "false"}"
+            title="Most national guidance is not indexed in MEDLINE">${svg("i-books")}Guidelines${svg("i-chev")}</button>
+          ${S.guideMenu ? `<div class="colmenu" style="min-width:250px">
+            ${GUIDE_SITES.map(g => `<a href="${esc(g.url(S.lastQ || S.q))}" target="_blank" rel="noopener">${esc(g.label)}<span>${esc(g.note)}</span></a>`).join("")}
+            <button type="button" data-design="guide">Europe PMC<span>only records indexed as guidance</span></button>
+            <p>National guidance is often not indexed in MEDLINE, so the Guideline row here under-counts it. These open a search elsewhere.</p>
+          </div>` : ""}
+        </span>` : ""}
         <button class="btn btn-sm" id="new-search">${svg("i-search")}New search</button>
         <button class="btn btn-sm" id="save-all">${svg("i-plus")}Save all shown</button>
       </div>
@@ -2067,6 +2100,16 @@ function renderAbout(){
     by the test suite in the repository, so it is not a claim you have to take on trust.
     What it does not cover: the sample stops at 2023, so it says nothing about how the very
     newest records are handled, and those are exactly the ones most likely to be unindexed.</p>
+
+    <h2>Why guidelines are linked, not counted</h2>
+    <p>Most national guidance is not indexed in MEDLINE. NICE guidance, for example, is
+    published by NICE and not as a journal article, so no amount of classifier work will make
+    the Guideline row a fair count of what guidance exists. The Guidelines button beside the
+    results opens the same question at
+    <a href="https://www.nice.org.uk" target="_blank" rel="noopener">NICE</a> and
+    <a href="https://www.tripdatabase.com" target="_blank" rel="noopener">Trip</a>, which is
+    honest in a way that a row of dots would not be: it sends you to the body that publishes
+    the guidance instead of pretending to contain it.</p>
 
     <h2>Retractions, and where the flags come from</h2>
     <p>A paper is flagged as retracted from two places. Europe PMC and OpenAlex say so in the
@@ -2707,7 +2750,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#col-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -2722,6 +2765,8 @@ document.addEventListener("click", (ev) => {
   if (t.id === "wipe-yes") { deleteAccount(); return; }
   if (t.hasAttribute("data-plot-toggle")) { S.plotOpen = !S.plotOpen; render(); return; }
   if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
+  if (t.id === "guide-pick") { S.guideMenu = !S.guideMenu; render(); return; }
+  if (t.dataset.design) { S.guideMenu = false; S.design = t.dataset.design; runSearch(S.q || S.lastQ); return; }
   if (t.hasAttribute("data-cell")) {
     const [tier, colK] = t.dataset.cell.split("/");
     const col = ERA_COLS.find(c => c.k === colK);
