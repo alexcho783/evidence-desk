@@ -10,7 +10,8 @@ import {classify, classifyPsy, findN} from "./classify.js";
 
 /* ══ Constants ═══════════════════════════════════════════ */
 
-const API = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
+const EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest";
+const API = EPMC + "/search";
 const PAGE = 25;
 const Y = new Date().getFullYear();
 
@@ -191,6 +192,7 @@ const S = {
      page. `key` records which search they belong to, so a stale set is never drawn. */
   indexed:{key:"", data:null, busy:false, err:false},
   sampled:0,        /* how many of the listed papers were pulled from the grid cells */
+  refsNote:"",      /* what a reference list is missing, in words, or "" when it is whole */
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -529,6 +531,9 @@ function normalisePsy(w){
     freeFullText: ((w.best_oa_location || {}).landing_page_url) || "",
     nctIds: [...new Set((abstract.match(/\bNCT\d{8}\b/g) || []))].slice(0, 3),
     openalexId: String(w.id || "").split("/").pop(),
+    /* OpenAlex lists a work's references on the record itself, so the psychology side needs
+       no separate endpoint: the ids go straight into a batched lookup. */
+    refs: (w.referenced_works || []).map(u => String(u).split("/").pop()).filter(Boolean),
     concern: false, erratum: false,
     preprint: w.type === "preprint",
     journalAbbrev: "",
@@ -909,6 +914,163 @@ function mergeSample(sample){
   S.results = fresh.concat(S.results);
 }
 
+/* ══ References, the other direction of citation chasing ═══════════════════════════════
+ *
+ * The README used to say this needed a fourth source. It does not: Europe PMC serves a
+ * paper's parsed reference list, and it answers cross-origin, which was checked from a
+ * browser before any of this was written.
+ *
+ * Two round trips. The references endpoint returns thin records with no publication types,
+ * so the ones that carry an identifier are batched back through the ordinary search
+ * endpoint, which returns them as full records that classify exactly like a search result.
+ * References Europe PMC could not resolve to an identifier cannot be classified or placed,
+ * so they are counted and reported rather than quietly dropped: a reference list shown as
+ * complete when it is not is the thing this feature must not do.
+ */
+const REF_BATCH = 40;   /* identifiers per search request; 40 keeps the query well short */
+const REF_MAX = 150;    /* at most three batches; a 500-reference review is not worth ten */
+
+/* Says, in one sentence, what a reference list does not contain. Two different shortfalls:
+   entries Europe PMC or OpenAlex could not match to a record, and entries beyond the cap.
+   A button that says "Cites (122)" above a list of 100 has to account for the other 22. */
+function refsNote(parsed, shown){
+  const missing = Math.max(0, parsed - shown);
+  if (!missing) return "";
+  const capped = parsed > REF_MAX ? Math.min(missing, parsed - REF_MAX) : 0;
+  const unmatched = missing - capped;
+  const bits = [];
+  if (unmatched) bits.push(`${unmatched} could not be matched to an indexed record`);
+  if (capped) bits.push(`${capped} beyond the first ${REF_MAX} were not loaded`);
+  return `Showing ${shown} of ${parsed} references: ${bits.join(", and ")}. `
+       + `A reference list here is what the index could parse, not the paper's own.`;
+}
+
+/* How many references Europe PMC has parsed, per paper, so the button can carry its count.
+   Fetched once when a sheet opens and never for a result in a list: a number on a button is
+   not worth a request for every paper on screen. */
+const refCounts = new Map();
+async function refCount(srcCode, id){
+  const key = srcCode + ":" + id;
+  if (refCounts.has(key)) return refCounts.get(key);
+  refCounts.set(key, null);                      /* in flight; stops a second request */
+  try {
+    const r = await fetch(`${EPMC}/${encodeURIComponent(srcCode)}/${encodeURIComponent(id)}/references`
+      + `?format=json&pageSize=1`, {headers:{Accept:"application/json"}});
+    const n = r.ok ? ((await r.json()).hitCount || 0) : 0;
+    refCounts.set(key, n);
+    /* The sheet may have been closed or replaced while this was in the air. */
+    const el = $("cites-n");
+    if (el && el.dataset.for === key) el.textContent = n ? ` (${n})` : "";
+    return n;
+  } catch (e) { refCounts.set(key, 0); return 0; }
+}
+
+async function fetchReferences(srcCode, id, signal){
+  const u = `${EPMC}/${encodeURIComponent(srcCode)}/${encodeURIComponent(id)}/references`
+          + `?format=json&pageSize=100`;
+  const r = await fetch(u, {headers:{Accept:"application/json"}, signal});
+  if (!r.ok) throw {kind:"server", status:r.status};
+  const d = await r.json().catch(() => { throw {kind:"parse"}; });
+  const all = (d.referenceList && d.referenceList.reference) || [];
+  return {all, parsed: d.hitCount || all.length};
+}
+
+/* The psychology half of the same feature. OpenAlex gives the referenced work ids on the
+   record, so one batched lookup replaces the references endpoint and the per-batch search. */
+async function citesOfPsy(paper){
+  if (inflight) inflight.abort();
+  const ctrl = (inflight = new AbortController());
+  const mine = ++seq;
+  const total = (paper.refs || []).length;
+  const ids = (paper.refs || []).slice(0, REF_MAX);
+
+  S.open = null; S.confirmDel = false;
+  S.cell = null;
+  S.indexed = {key:"", data:null, busy:false, err:false};
+  S.sampled = 0; S.refsNote = "";
+  S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
+  S.cursor = "*"; S.exhausted = true;
+  S.chainLabel = `papers cited by ${paper.title || "this paper"}`;
+  go("search", {silent:true});
+  render();
+
+  try {
+    const rows = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const batch = ids.slice(i, i + 50);
+      const q = new URLSearchParams({filter: "openalex_id:" + batch.join("|"),
+                                     "per-page": String(batch.length)});
+      const r = await fetch(OPENALEX + "?" + q.toString(),
+        {headers:{Accept:"application/json"}, signal:ctrl.signal});
+      if (mine !== seq) return;
+      if (!r.ok) continue;
+      const d = await r.json().catch(() => null);
+      for (const w of ((d && d.results) || [])) rows.push(normalisePsy(w));
+    }
+    if (mine !== seq) return;
+    const seen = new Set();
+    S.results = rows.filter(x => !seen.has(x.id) && seen.add(x.id));
+    S.hitCount = S.results.length;
+    S.refsNote = refsNote(total, S.results.length);
+    if (!S.results.length) S.err = {kind: ids.length ? "refsunresolved" : "norefs"};
+  } catch (e) {
+    if (mine !== seq || aborted(e)) return;
+    S.err = (e && e.kind) ? e : {kind:"network"};
+  }
+  if (mine !== seq) return;
+  inflight = null;
+  S.busy = false;
+  render();
+}
+
+async function citesOf(srcCode, id, label){
+  if (inflight) inflight.abort();
+  const ctrl = (inflight = new AbortController());
+  const mine = ++seq;
+
+  S.open = null; S.confirmDel = false;
+  S.cell = null;
+  S.indexed = {key:"", data:null, busy:false, err:false};
+  S.sampled = 0;
+  S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
+  S.cursor = "*"; S.exhausted = true;
+  S.chainLabel = `papers cited by ${label}`;
+  S.refsNote = "";
+  go("search", {silent:true});
+  render();
+
+  try {
+    const {all, parsed} = await fetchReferences(srcCode, id, ctrl.signal);
+    if (mine !== seq) return;
+    const ided = all.filter(x => x.id && x.source).slice(0, REF_MAX);
+    const rows = [];
+    for (let i = 0; i < ided.length; i += REF_BATCH) {
+      const batch = ided.slice(i, i + REF_BATCH);
+      const q = batch.map(x => `EXT_ID:${x.id}`).join(" OR ");
+      const p = new URLSearchParams({query:`(${q})`, format:"json", resultType:"core",
+                                     pageSize:String(batch.length)});
+      const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}, signal:ctrl.signal});
+      if (mine !== seq) return;
+      if (!r.ok) continue;
+      const d = await r.json().catch(() => null);
+      for (const row of ((d && d.resultList && d.resultList.result) || [])) rows.push(normalise(row));
+    }
+    if (mine !== seq) return;
+    const seen = new Set();
+    S.results = rows.filter(x => !seen.has(x.id) && seen.add(x.id));
+    S.hitCount = S.results.length;
+    S.refsNote = refsNote(parsed, S.results.length);
+    if (!S.results.length) S.err = {kind: parsed ? "refsunresolved" : "norefs"};
+  } catch (e) {
+    if (mine !== seq || aborted(e)) return;
+    S.err = (e && e.kind) ? e : {kind:"network"};
+  }
+  if (mine !== seq) return;
+  inflight = null;
+  S.busy = false;
+  render();
+}
+
 /* ══ Search flow ═══════════════════════════════════════════ */
 
 /* Only the newest search may write to the state. `seq` numbers every search; a reply
@@ -927,6 +1089,7 @@ async function runSearch(q, opts){
      a different source, drops it. Without this the cell silently went on filtering every
      later search, and the grid stopped loading because it is skipped inside a cell. */
   if (!(opts && opts.keepCell)) S.cell = null;
+  S.refsNote = "";
   q = (q || "").trim();
   if (!q) return;
 
@@ -977,7 +1140,7 @@ async function similarTo(paper){
   const mine = ++seq;
   S.open = null; S.confirmDel = false;
   S.indexed = {key:"", data:null, busy:false, err:false};
-  S.sampled = 0; S.cell = null;
+  S.sampled = 0; S.cell = null; S.refsNote = "";
   S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = true;
   S.chainLabel = `papers similar to ${label}`;
@@ -1044,6 +1207,10 @@ function errCopy(e){
                              d:"OpenAlex caps how much anonymous traffic it serves in a day, and that cap is shared with everyone else using it. Medicine and Trials are unaffected and still work.", retry:true};
     case "rate":     return {t:"Too many searches too quickly", d:`${src().db} is rate-limiting this browser. Wait a few seconds and try again.`, retry:true};
     case "server":   return {t:`${src().db} returned an error`, d:`The service answered with status ${e.status}. It may be briefly down.`, retry:true};
+    case "norefs":   return {t:"Europe PMC has no reference list for this paper",
+                             d:"Reference lists are parsed from the full text, and are missing for many records. It does not mean the paper cites nothing.", retry:false};
+    case "refsunresolved": return {t:"None of these references could be looked up",
+                             d:"Europe PMC parsed the reference list but matched none of the entries to a record it holds, so there is nothing to classify.", retry:false};
     case "notfound": return {t:"That paper isn't in OpenAlex", d:"Similar papers are computed by OpenAlex, which does not index every record Europe PMC holds.", retry:false};
     case "parse":    return {t:"Unreadable response", d:`${src().db} answered with something this page couldn't parse.`, retry:true};
     default:         return {t:"Something went wrong", d:"The search didn't complete.", retry:true};
@@ -1335,6 +1502,7 @@ function renderSearch(){
     results = `${S.chainLabel ? `<div class="banner">${svg("i-link")}
         <span class="grow">Showing <b>${esc(S.chainLabel.slice(0, 110))}</b></span>
         <button class="btn btn-sm" id="new-search" type="button">Clear</button></div>` : ""}
+      ${S.refsNote ? `<div class="notice" role="status">${svg("i-info")}<div>${esc(S.refsNote)}</div></div>` : ""}
       <div class="list-head">
         <span class="list-h">${S.cell ? "One cell of the grid" : S.chainLabel ? "Related papers" : "Results"}</span>
         <span class="list-n">${designTiers() && !S.cell
@@ -1559,6 +1727,9 @@ function renderAbout(){
 /* ══ Sheet ═══════════════════════════════════════════ */
 
 function renderSheet(){
+  /* One request, only on opening a sheet. refCount() de-duplicates and fills the button
+     in place when the answer arrives. */
+  if (S.open && S.open.epmcId) refCount(S.open.epmcSource || "MED", S.open.epmcId);
   const root = $("sheet-root");
   if (S.signIn) { renderSignInSheet(); return; }
   if (!S.open) { root.innerHTML = ""; return; }
@@ -1621,8 +1792,18 @@ function renderSheet(){
       ${p.authors ? `<p class="sheet-authors">${esc(p.authors)}</p>` : ""}
       <dl class="kv">${kv.join("")}</dl>
       ${(p.epmcId || (p.authorList || []).length) ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
-        ${p.epmcId ? `<button class="btn btn-sm" type="button" data-cited="${esc(p.epmcSource || "MED")}:${esc(p.epmcId)}">
-          ${svg("i-search")}Papers citing this</button>` : ""}
+        ${p.epmcId ? `<button class="btn btn-sm" type="button" data-cited="${esc(p.epmcSource || "MED")}:${esc(p.epmcId)}"
+          title="Papers that cite this one, classified and placed on the same grid">
+          ${svg("i-search")}Cited by${p.citations ? ` (${p.citations.toLocaleString()})` : ""}</button>` : ""}
+        ${!p.epmcId && (p.refs || []).length ? `<button class="btn btn-sm" type="button" data-cites="psy">
+          ${svg("i-books")}Cites (${p.refs.length})</button>` : ""}
+        ${p.epmcId ? (() => {
+            const key = (p.epmcSource || "MED") + ":" + p.epmcId;
+            const n = refCounts.get(key);
+            return `<button class="btn btn-sm" type="button" data-cites="${esc(key)}"
+              title="The references this paper rests on, classified and placed on the same grid">
+              ${svg("i-books")}Cites<span id="cites-n" data-for="${esc(key)}">${n ? ` (${n})` : ""}</span></button>`;
+          })() : ""}
         ${(p.authorList || []).length ? (() => {
             const a = p.authorList[0];
             const name = `${a.last}${a.initials ? " " + a.initials : ""}`;
@@ -2075,7 +2256,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,#plot-png,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -2120,6 +2301,12 @@ document.addEventListener("click", (ev) => {
     return;
   }
   if (t.dataset.similar && S.open) { similarTo(S.open); return; }
+  if (t.dataset.cites) {
+    if (t.dataset.cites === "psy") { if (S.open) citesOfPsy(S.open); return; }
+    const [srcCode, id] = t.dataset.cites.split(":");
+    citesOf(srcCode, id, (S.open && S.open.title) || "this paper");
+    return;
+  }
   if (t.dataset.cited) {
     const [srcCode, id] = t.dataset.cited.split(":");
     const label = (S.open && S.open.title) || "this paper";

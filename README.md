@@ -181,10 +181,18 @@ The sheet for any Europe PMC paper offers **Papers citing this**, which runs
 the citing papers arrive with publication types and classify normally — same plot, same rows,
 same saving. A banner says whose citations are showing, with a way back.
 
-The other direction is deliberately absent. `/{source}/{id}/references` returns only the
-references Europe PMC has parsed — 10 of roughly 40 for a NEJM paper — with no publication
-types, so it would be both incomplete and unrankable. A half-empty reference list presented as
-a whole one is worse than no feature.
+The other direction is **Cites**, which was wrongly written off here as needing a fourth
+source. `/{source}/{id}/references` returns the references Europe PMC has parsed, as thin
+records with no publication types, so the ones carrying an identifier are batched back
+through the ordinary search endpoint in groups of 40 and come back as full records that
+classify like any other result. Psychology needs neither call: OpenAlex lists
+`referenced_works` on the record itself.
+
+The old objection was right about one thing and the interface answers it directly. A parsed
+reference list is not the paper's own: Wakefield 1998 has 26 parsed references, of which 18
+resolve to records. The shortfall is stated above the results, in words, every time, along
+with anything past the 150-reference cap. A half-empty reference list presented as a whole
+one would indeed be worse than no feature; one that says what it is missing is not.
 
 ## Collections and references
 

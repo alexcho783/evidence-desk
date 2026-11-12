@@ -10,9 +10,9 @@ entry says which part and what is left.
 
 | ID | Feature | Value | Effort | Status |
 | --- | --- | --- | --- | --- |
-| N1 | True evidence map | Very high | Medium | Partly built (B1, B2); gaps listed below |
-| N2 | Why this label | High | Low | Partly built (A6); gaps listed below |
-| N3 | Citation chasing in both directions | High | Low | Not started |
+| N1 | True evidence map | Very high | Medium | **Built** (B1, B2, N1) |
+| N2 | Why this label | High | Low | **Built** (A6, N2) |
+| N3 | Citation chasing in both directions | High | Low | **Built** (N3) |
 | N4 | Screening mode | High | Medium | Not started |
 | N5 | Integrity recheck | High | Low | Not started |
 | N6 | Timeline view | Medium | Medium | Not started |
@@ -35,7 +35,7 @@ Build order from the specification: **N1, N2** first; then **N3, N5, N8, N19**; 
 
 ---
 
-## N1 True evidence map — partly built
+## N1 True evidence map — built
 
 Each grid cell shows how many papers Europe PMC has indexed with that design in that era,
 and the cards are sampled from every non-empty cell rather than being page one by relevance.
@@ -50,11 +50,11 @@ Delivered by commits `d222cc4` (B1) and `2140ce1` (B2):
 - A partial set is discarded rather than drawn, because a missing cell reads as a zero.
 - Sampled papers are ordered best-of-every-cell in ladder order, then second-best of every
   cell. Sorting the whole sample by citations hands the top of the list to the Review row.
-- Cells are clickable.
-
-Still to do: carry the chosen cell in the URL so it is shareable; cache the counts in
-`sessionStorage` keyed by query; mark the sampled cards as coming from the map; and say in
-a tooltip that publication types lag, so the newest era undercounts.
+- Cells are clickable and the cell travels in the URL (`cell=trial/mid`), so one cell of
+  the grid is shareable. Counts are cached in `sessionStorage` keyed by query: a repeated
+  search goes from 6.9 seconds to 0.8.
+- Sampled papers carry a "From the map" chip naming the cell they came from.
+- The newest column says it undercounts, because indexing lags publication by months.
 
 **Known limit, proven not fixable here.** The specification's test was that DAPA-HF and
 EMPEROR-Reduced appear for "SGLT2 inhibitors heart failure mortality". They cannot: neither
@@ -63,29 +63,35 @@ so both are excluded before any ordering or sampling runs. Verified by querying 
 against each term individually. This needs query expansion, which is not part of N1. The
 other half of the test passes: the 2011-2021 trial cell shows 249.
 
-## N2 Why this label — partly built
+## N2 Why this label — built
 
 The sheet says where a design label came from: the indexed publication type, or the exact
 phrase that triggered an inferred label, highlighted in the abstract.
 
-Delivered by `6ebd01b` (A6) and `66fb820` (A6, quote the phrase that produced the label):
-`classify()` returns `because` and the sheet names it.
+`classify()` and `classifyPsy()` both return `because`, and the sheet names it. The phrase
+is marked in the abstract when it is there, and the line says "in the title" when the
+trigger came from the title instead, rather than promising a highlight that is not there.
+A paper saved before any of this existed says so, which is not the same as having been read
+and found empty.
 
-Still to do: `classifyPsy()` returns no `because` at all, so every psychology label is
-unexplained; the phrase is not highlighted in the abstract; and a stored paper saved before
-this existed needs treating as unknown rather than blank.
-
-## N3 Citation chasing in both directions — not started
+## N3 Citation chasing in both directions — built
 
 Alongside "Cited by", a "Cites" view showing the paper's reference list, classified and
 placed on the same grid.
 
-`GET /{source}/{id}/references?format=json&pageSize=100`, then batch the identifiers back
-through the search endpoint (`EXT_ID:a OR EXT_ID:b ...`) in groups of about 50, so the
-references arrive as full records with publication types and can be classified. Reuse the
-"Cited by" results view and grid. For psychology, OpenAlex lists `referenced_works`.
-References with no identifier should be reported as a count, not silently dropped.
-Done when: Wakefield 1998 shows "Cites (26)" and the references appear on a grid.
+`GET /{source}/{id}/references?format=json&pageSize=100`, verified from a browser to answer
+cross-origin before anything was written, then the identifiers are batched back through the
+search endpoint (`EXT_ID:a OR EXT_ID:b ...`) in groups of 40 so the references arrive as
+full records with publication types. Psychology needs neither call: OpenAlex lists
+`referenced_works` on the record.
+
+Both buttons carry their count: "Cited by (1,210)" from the record, "Cites (26)" from one
+request made when a sheet opens, never for a paper in a list.
+
+Capped at 150 references. Every entry the button promises is accounted for above the
+results: Wakefield 1998 reads "Showing 18 of 26 references: 8 could not be matched to an
+indexed record." Done when: Wakefield 1998 shows "Cites (26)" and the references appear on
+a grid. Both hold.
 
 ---
 
