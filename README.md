@@ -1,10 +1,15 @@
 # Conspectus — public edition
 
 Formerly Evidence Desk. The repository and the published site moved with the name, so the
-address is now `https://alexcho783.github.io/conspectus/`. **The old Pages URL is dead and
+address is now `https://alexcho783.github.io/Conspectus/`. **The old Pages URL is dead and
 will not redirect**: GitHub redirects a renamed repository's issues, stars and git
 operations, but project site URLs are the documented exception, so anything still pointing
 at `/evidence-desk/` gets a 404.
+
+**The capital C in the path is load-bearing.** The repository is named `Conspectus`, and
+GitHub Pages paths are case-sensitive, so `/conspectus/` is a 404 while `/Conspectus/`
+serves the site. Anything that has to match the address exactly, the Supabase redirect
+allow-list above all, has to match the capital too.
 
 Two things deliberately did not move. The browser storage keys are still `ed-*`, because
 renaming them would orphan every reading list, note and collection that anyone has saved,
@@ -78,7 +83,7 @@ gh repo create conspectus --public --source=. --push
 ```
 
 Then in the repository, **Settings → Pages → Source: Deploy from a branch → main / (root)**.
-It appears at `https://<your-username>.github.io/conspectus/` within a minute or two.
+It appears at `https://<your-username>.github.io/<repo-name>/` within a minute or two.
 
 **Netlify or Cloudflare Pages** — drag the folder onto their dashboard. No build command, no
 publish directory to set.
@@ -283,7 +288,7 @@ grants nothing on its own; row-level security is what keeps one person's rows aw
 everyone else. Never put the `service_role` key here: it bypasses those policies entirely.
 
 **4. Set the redirect URL.** In Authentication → URL Configuration, set Site URL to where the
-site is actually served (for example `https://yourname.github.io/conspectus/`) and add it
+site is actually served (for example `https://yourname.github.io/<repo-name>/`) and add it
 under Redirect URLs. Sign-in links bounce off this, so a wrong value here is the usual reason
 a link lands on a blank page.
 
