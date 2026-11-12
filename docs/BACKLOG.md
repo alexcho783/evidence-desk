@@ -14,24 +14,29 @@ entry says which part and what is left.
 | N2 | Why this label | High | Low | **Built** (A6, N2) |
 | N3 | Citation chasing in both directions | High | Low | **Built** (N3) |
 | N4 | Screening mode | High | Medium | Not started |
-| N5 | Integrity recheck | High | Low | Not started |
-| N6 | Timeline view | Medium | Medium | Not started |
-| N7 | Trial and paper links | High | Medium | Not started |
-| N8 | Best synthesis pinned | High | Low | Not started |
-| N9 | Guideline link out | Medium | Low | Not started |
-| N10 | PICO question builder | Medium | Medium | Not started |
-| N11 | Saved search alerts | Medium | Medium | Not started |
-| N12 | Shareable read only collections | Medium | Low | Not started |
+| N5 | Integrity recheck | High | Low | **Built** (N5) |
+| N6 | Timeline view | Medium | Medium | **Built** (N6) |
+| N7 | Trial and paper links | High | Medium | **Built** (N7) |
+| N8 | Best synthesis pinned | High | Low | **Built** (N8) |
+| N9 | Guideline link out | Medium | Low | **Built** (N9) |
+| N10 | PICO question builder | Medium | Medium | **Built** (N10) |
+| N11 | Saved search alerts | Medium | Medium | **Written, not deployed** (N11) |
+| N12 | Shareable read only collections | Medium | Low | **Written, not deployed** (N12) |
 | N13 | Installable app and offline reading list | Medium | Low | Not started |
 | N14 | Keyboard shortcuts | Low | Low | Not started |
-| N15 | Compare two questions | Low | Medium | Not started |
-| N16 | Free full text through Unpaywall | Medium | Low | Not started |
+| N15 | Compare two questions | Low | Medium | **Built** (N15) |
+| N16 | Free full text through Unpaywall | Medium | Low | **Built** (N16) |
 | N17 | Preprint and published version merged | Low | Low | Not started |
-| N18 | Richer evidence table | Medium | Low | Not started |
-| N19 | Small study marker | Medium | Low | Not started |
+| N18 | Richer evidence table | Medium | Low | **Built** (N18) |
+| N19 | Small study marker | Medium | Low | **Built** (N19) |
 
 Build order from the specification: **N1, N2** first; then **N3, N5, N8, N19**; then
 **N4, N7, N16, N18**; the rest by what people ask for.
+
+**Where this stands.** Everything except N4, N13, N14 and N17 is built. N11 and N12 are
+written but not deployed: both need schema changes to a live Supabase project, and the
+README has the exact commands. The four that remain were set aside deliberately, not
+because they are hard.
 
 ---
 
@@ -127,7 +132,7 @@ create policy "own rows" on public.screening for all
 - Done when: a 50 paper collection can be screened by keyboard alone, and reopening on
   another device continues where it stopped.
 
-## N5 Integrity recheck — not started
+## N5 Integrity recheck — built
 
 Recheck saved DOIs against Crossref, which carries the Retraction Watch database, whenever
 a collection is opened or exported.
@@ -147,7 +152,7 @@ const concern   = ups.some(u => u.type === "expression_of_concern");
   before relying on it; papers with no DOI cannot be checked, and the interface must say so.
 - Done when: adding Wakefield 1998 and exporting shows it in red with its source named.
 
-## N6 Timeline view — not started
+## N6 Timeline view — built
 
 A toggle replacing the three era columns with a continuous year axis; rows stay designs.
 
@@ -157,7 +162,7 @@ A toggle replacing the three era columns with a continuous year axis; rows stay 
 - Done when: the CMT1A ascorbic acid question shows trials around 2009-2014 followed by
   later syntheses.
 
-## N7 Trial and paper links — not started
+## N7 Trial and paper links — built
 
 - Paper to trial: `GET https://clinicaltrials.gov/api/v2/studies/{NCT}`, show status,
   enrolment, registered primary outcome, whether results were posted.
@@ -169,7 +174,7 @@ A toggle replacing the three era columns with a continuous year axis; rows stay 
 - Fetch only when a sheet opens, never for every result.
 - Done when: DAPA-HF's paper shows its registry record, and NCT03036124 lists its NEJM paper.
 
-## N8 Best synthesis pinned — not started
+## N8 Best synthesis pinned — built
 
 Pin the most recent Cochrane review and the most recent other meta-analysis for the query.
 
@@ -180,20 +185,20 @@ Pin the most recent Cochrane review and the most recent other meta-analysis for 
   trials", using the N1 counts.
 - Done when: the statin primary prevention query pins a Cochrane review.
 
-## N9 Guideline link out — not started
+## N9 Guideline link out — built
 
 A Guidelines menu opening the same question in NICE and similar, plus the Europe PMC
 guideline filter. No API: build search URLs, confirm each site's URL format first. Keep the
 list short and UK focused unless a region setting is added. Explain on the Ranking page why
 guidelines are linked rather than counted.
 
-## N10 PICO question builder — not started
+## N10 PICO question builder — built
 
 Four optional boxes assembling a visible, editable Europe PMC query. OR within a box, AND
 between boxes, quote multi-word phrases. PICO parts go in the URL so built searches stay
 shareable. The plain search box stays the default. Synonyms last.
 
-## N11 Saved search alerts — not started
+## N11 Saved search alerts — written, not deployed
 
 `saved_searches (user_id, query, filters, last_run, last_seen_ids)` with the same row level
 security pattern; a Supabase Edge Function run weekly by `pg_cron` queries Europe PMC with a
@@ -201,7 +206,7 @@ date filter since `last_run`; email through a transactional provider with the ke
 Supabase secret. Adds personal data and a scheduled job, so the privacy page must change.
 Rate limit per user. Unsubscribe links.
 
-## N12 Shareable read only collections — not started
+## N12 Shareable read only collections — written, not deployed
 
 A collections table (or a public flag) with a random slug, and a policy allowing anonymous
 `select` only where `public` is true. Share toggle with "include my notes" as a **separate**
@@ -221,12 +226,12 @@ the benefit of the deferred native app, and tests whether anyone wants it.
 text, `?` shows the list. One keydown listener that ignores events from inputs and
 textareas. Visible focus ring. Check it does not clash with screen reader keys.
 
-## N15 Compare two questions — not started
+## N15 Compare two questions — built
 
 Two queries, two grids, shared colour scale, `q` and `q2` in the URL. Split on desktop,
 stacked on a phone. Show both queries clearly, since wording changes counts. Needs N1.
 
-## N16 Free full text through Unpaywall — not started
+## N16 Free full text through Unpaywall — built
 
 `GET https://api.unpaywall.org/v2/{doi}?email=CONTACT_EMAIL`, read `best_oa_location`
 (url, version, host type). An email parameter is required instead of a key. Call only when
@@ -242,20 +247,21 @@ by title similarity. Note: testing during phase 2 found a bioRxiv paper reaching
 list as a `PMC:` record with no authors and no preprint flag, which this feature should
 also cover.
 
-## N18 Richer evidence table — not started
+## N18 Richer evidence table — built
 
 Add year, country, funding, registration number, sample size and optional user-filled PICO
 columns to the evidence table export. Most fields are already collected. Label country
 "first author country", since it is approximate. Column chooser on export.
 
-## N19 Small study marker — not started
+## N19 Small study marker — built
 
 Primary studies with a detected sample size under a threshold (say 50) are drawn as hollow
 dots, with a legend entry. Uses the existing `findN()`, for primary studies only, never for
 syntheses. Unknown `n` must not look small. Done when Wakefield 1998 (n = 12) is hollow.
 
-Note from phase 2: `findN()` currently reads 494 from a study of 1,407 by picking a
-subgroup `(n=494)`, so its confidence needs tightening before it drives a visual marker.
+That tightening is done: `findN()` returns `{n, sure}`, and only a confident total draws
+the marker. Across the 312-record validation set that is 50 confident, 47 uncertain and
+215 with nothing found.
 
 ---
 
@@ -277,3 +283,23 @@ subgroup `(n=494)`, so its confidence needs tightening before it drives a visual
 - Unpaywall REST API v2: unpaywall.org/api/v2
 - Europe PMC RESTful Web Service: europepmc.org/RestfulWebService
 - ClinicalTrials.gov API v2: clinicaltrials.gov/data-api/api
+
+
+---
+
+## Still open
+
+**N4 screening mode**, **N13 installable app and offline reading list**, **N14 keyboard
+shortcuts** and **N17 preprint and published version merged** were deliberately left. Their
+specifications above are unchanged and still buildable as written.
+
+N17 has one extra note from testing: a bioRxiv paper reached the reading list as a `PMC:`
+record with no authors and no preprint flag, because preprint detection keys on the source
+being `PPR`. Whatever N17 does about linked pairs should cover that case too.
+
+## Deployment still owed
+
+N11 and N12 are code-complete and inert. Neither has touched the live Supabase project.
+`supabase-setup.sql` carries the tables, the policies and a `delete_my_account()` that
+clears all three tables in one transaction; the README has the function deploy, the three
+secrets, the 401 check and the cron schedule, in the order to run them.
