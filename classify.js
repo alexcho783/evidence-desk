@@ -71,15 +71,33 @@ export function classify(r){
   if (has("editorial","comment","letter","news","published erratum"))
                                  return {design:"Comment", tier:"narrative", src:"metadata", because: why};
 
-  /* No design in the metadata — read the abstract instead. */
+  /* No design in the metadata — read the abstract instead.
+     Each signal keeps the phrase that matched it, rather than letting whichever regex ran
+     last set `why`. The card quotes that phrase, so the wrong one reads as a contradiction:
+     a mouse study was coming back "Trial, inferred from the phrase mouse". */
+  const grab = x => { const m = x.exec(txt); return m ? m[0].trim() : ""; };
+
   /* "randomised" on its own appears in any paper that discusses trials, and "participants
      were" appears in almost every human study. Both matched far too much. */
-  const humanTrial = re(/\b(were|was) randomi[sz]ed|randomly (assigned|allocated)|randomi[sz]ed to|(double|single|triple)-blind|placebo-controlled|open-label,? randomi[sz]ed|phase (ii|iii|2|3) trial/);
+  const trialPhrase = grab(/\b(were|was) randomi[sz]ed|randomly (assigned|allocated)|randomi[sz]ed to|(double|single|triple)-blind|placebo-controlled|open-label,? randomi[sz]ed|phase (ii|iii|2|3) trial/);
   /* Text that talks about trials without being one. */
-  const aboutTrials = re(/target trial emulation|propensity[- ]score|retrospective|real-world|compared with randomi[sz]ed trials|pooled analysis of/);
-  const animal = re(/\bmice\b|\bmouse\b|murine|\brats?\b|in vitro|cell lines?|ipsc|non-human primate|macaca|zebrafish|knockout|transgenic|preclinical|organoid/);
-  if (animal && !humanTrial) return {design: re(/in vitro|cell lines?|ipsc|organoid/) ? "In vitro" : "Animal study", tier:"preclinical", src:"inferred", because: why};
-  if (humanTrial && !aboutTrials) return {design:"Trial",       tier:"trial",  src:"inferred", because: why};
+  const aboutPhrase = grab(/target trial emulation|propensity[- ]score|retrospective|real-world|compared with randomi[sz]ed trials|pooled analysis of/);
+  const animalPhrase = grab(/\bmice\b|\bmouse\b|murine|\brats?\b|in vitro|cell lines?|ipsc|non-human primate|macaca|zebrafish|knockout|transgenic|preclinical|organoid/);
+  /* Whether the subjects are people, which is a different question from whether anything
+     was randomised. An animal study that randomises its animals is still an animal study. */
+  const humanPhrase = grab(/\b(patients|participants|volunteers|outpatients|inpatients|adults|children|infants|neonates|women|men|pregnant)\b/);
+
+  /* A protocol describes a trial that has not reported. Placing it at trial level puts a
+     plan on the same row as a result, which is the opposite of what the grid is for. */
+  const protoPhrase = (/\bprotocol\b|rationale and design/.test(ttl) ? (ttl.match(/\bprotocol\b|rationale and design/) || [""])[0] : "")
+    || grab(/\b(participants|patients|we) will be (randomi[sz]ed|recruited|enrolled|allocated)|\bwill be randomly (assigned|allocated)|this protocol describes|statistical analysis plan/);
+  if (protoPhrase && (trialPhrase || /trial/.test(txt)))
+    return {design:"Trial protocol", tier:"narrative", src:"inferred", because: protoPhrase};
+
+  if (animalPhrase && !humanPhrase)
+    return {design: /in vitro|cell line|ipsc|organoid/.test(animalPhrase) ? "In vitro" : "Animal study",
+            tier:"preclinical", src:"inferred", because: animalPhrase};
+  if (trialPhrase && !aboutPhrase) return {design:"Trial", tier:"trial", src:"inferred", because: trialPhrase};
   if (re(/\bcohort\b|prospectively followed|longitudinal|years of follow-up/))
                              return {design:"Cohort study",     tier:"cohort", src:"inferred", because: why};
   if (re(/case-control|case–control/))
