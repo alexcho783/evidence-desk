@@ -184,7 +184,7 @@ const EXAMPLES = [
 ];
 
 const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections",
-            counts:"ed-counts"};
+            counts:"ed-counts", integrity:"ed-integrity"};
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -205,6 +205,7 @@ const S = {
   indexed:{key:"", data:null, busy:false, err:false},
   sampled:0,        /* how many of the listed papers were pulled from the grid cells */
   refsNote:"",      /* what a reference list is missing, in words, or "" when it is whole */
+  integrity:{busy:false, ran:false, newly:[]},   /* the Crossref retraction recheck */
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -1085,6 +1086,87 @@ async function citesOf(srcCode, id, label){
   render();
 }
 
+/* ══ Integrity recheck ═══════════════════════════════════════════
+ *
+ * A retraction flag read at the moment a paper was saved is a fact about that moment. The
+ * journal may have retracted it since, and PubMed's own flag can lag the journal. Crossref
+ * took on the Retraction Watch database in 2023 and serves it free, so a saved paper can
+ * be asked about again.
+ *
+ * Only saved papers, only when a collection is opened or exported, never during a search:
+ * one request per DOI is cheap but it is not free, and a search is not the moment this
+ * question matters. Answers are cached for a day in sessionStorage.
+ */
+const CROSSREF = "https://api.crossref.org/works/";
+const INTEGRITY_TTL = 24 * 60 * 60 * 1000;
+const INTEGRITY_CONCURRENCY = 4;
+
+function integrityCache(){ return sessionStore(LS.integrity) || {}; }
+
+async function checkOne(doi, mailto){
+  const u = CROSSREF + encodeURIComponent(doi) + (mailto ? "?mailto=" + encodeURIComponent(mailto) : "");
+  const r = await fetch(u, {headers:{Accept:"application/json"}});
+  /* A DOI Crossref does not know is not evidence of anything, so it is recorded as
+     unknown rather than as clean. */
+  if (!r.ok) return null;
+  const m = ((await r.json()) || {}).message || {};
+  const ups = m["updated-by"] || [];
+  return {
+    retracted: ups.some(u2 => u2.type === "retraction"),
+    concern:   ups.some(u2 => u2.type === "expression_of_concern"),
+    at: Date.now()
+  };
+}
+
+async function checkIntegrity(papers){
+  const cfg = window.ED_CONFIG || {};
+  const mailto = String(cfg.apiContact || "").trim();
+  const cache = integrityCache();
+  const now = Date.now();
+  const todo = [];
+  for (const p of papers) {
+    if (!p.doi) continue;
+    const hit = cache[p.doi];
+    if (hit && now - hit.at < INTEGRITY_TTL) continue;
+    todo.push(p.doi);
+  }
+  if (!todo.length) return applyIntegrity(papers, cache);
+
+  S.integrity.busy = true; render();
+  let next = 0;
+  const worker = async () => {
+    while (next < todo.length) {
+      const doi = todo[next++];
+      try { const res = await checkOne(doi, mailto); if (res) cache[doi] = res; }
+      catch (e) { /* offline, or Crossref down. Silence beats a false all-clear. */ }
+    }
+  };
+  await Promise.all(Array.from({length: INTEGRITY_CONCURRENCY}, worker));
+  sessionStore(LS.integrity, cache);
+  S.integrity.busy = false;
+  return applyIntegrity(papers, cache);
+}
+
+/* Writes what Crossref said onto the saved papers, and remembers which ones changed, so
+   the list can say "since you saved it" rather than just showing a flag that was always
+   there. */
+function applyIntegrity(papers, cache){
+  const fresh = [];
+  for (const p of papers) {
+    const hit = p.doi && cache[p.doi];
+    if (!hit) continue;
+    p.integrityAt = hit.at;        /* in memory only; not worth a sync of its own */
+    if (hit.retracted && !p.retracted) { p.retracted = true; fresh.push(p); }
+    else if (hit.concern && !p.concern && !p.retracted) { p.concern = true; fresh.push(p); }
+  }
+  /* Only a flag that actually flipped is worth writing and syncing. */
+  if (fresh.length) persist({type:"bulk", items: fresh});
+  S.integrity.newly = fresh.map(p => p.id);
+  S.integrity.ran = true;
+  render();
+  return fresh;
+}
+
 /* ══ Search flow ═══════════════════════════════════════════ */
 
 /* Only the newest search may write to the state. `seq` numbers every search; a reply
@@ -1589,19 +1671,50 @@ function syncBanner(){
     <button class="btn btn-sm btn-primary" id="sign-in-open" type="button">Sign in</button></div>`;
 }
 
+/* What the reading list says about retractions. The warning used to be written inside the
+   branch that runs when the list is empty, so it could never appear: a list with a
+   retracted paper in it showed nothing at all. */
+function integrityBanner(all){
+  const bad = all.filter(p => p.retracted);
+  const eoc = all.filter(p => p.concern && !p.retracted);
+  const newly = new Set(S.integrity.newly || []);
+  const freshBad = bad.filter(p => newly.has(p.id)).length;
+  const noDoi = all.filter(p => !p.doi).length;
+  const out = [];
+
+  if (S.integrity.busy)
+    out.push(`<div class="notice" role="status">${svg("i-retry")}<div>Rechecking these papers against Crossref, which carries the Retraction Watch database.</div></div>`);
+
+  if (bad.length) {
+    const one = bad.length === 1;
+    const since = freshBad === bad.length ? ` since you saved ${one ? "it" : "them"}`
+                : freshBad ? `, ${freshBad} of them since you saved them` : "";
+    out.push(`<div class="notice notice-bad">${svg("i-alert")}<div><b>${bad.length} saved paper${one ? " has" : "s have"} been retracted${since}.</b>
+      A retracted paper should not be cited as evidence. ${one ? "It is" : "They are"} struck through below, and marked in anything you export.</div></div>`);
+  }
+
+  if (eoc.length) out.push(`<div class="notice">${svg("i-alert")}<div><b>${eoc.length} saved paper${eoc.length === 1 ? " has" : "s have"} an expression of concern.</b>
+    That is not a retraction. It means the journal has raised a doubt it has not yet resolved.</div></div>`);
+
+  /* Saying which papers could not be checked matters as much as the flags themselves: a
+     list with no warning is not the same as a list that was checked and came back clean. */
+  if (S.integrity.ran && !S.integrity.busy && noDoi)
+    out.push(`<div class="notice" role="status">${svg("i-info")}<div>${noDoi} of these ${noDoi === 1 ? "has" : "have"} no DOI, so ${noDoi === 1 ? "it" : "they"} cannot be checked against Crossref. Absence of a warning is not a clean bill of health.</div></div>`);
+
+  return out.join("");
+}
+
 function renderList(){
   const all = [...S.list.values()];
+  /* Once per session, on opening the list. Not during a search, and not on every render. */
+  if (!S.integrity.ran && !S.integrity.busy && all.some(p => p.doi)) {
+    S.integrity.ran = true;                    /* set first, so a re-render cannot re-enter */
+    checkIntegrity(all).catch(() => { S.integrity.busy = false; });
+  }
   const accounts = !!(window.EDAuth && window.EDAuth.enabled);
   if (!all.length) {
     $("view-list").innerHTML = `<div class="eyebrow">Reading list</div>
       ${syncBanner()}
-    ${(() => {
-      const bad = all.filter(x => x.retracted);
-      if (!bad.length) return "";
-      return `<div class="notice notice-bad">${svg("i-alert")}<div><b>${bad.length} saved paper${bad.length === 1 ? " has" : "s have"} been retracted.</b>
-        A retracted paper should not be cited as evidence. ${bad.length === 1 ? "It is" : "They are"} struck through below,
-        and marked in anything you export.</div></div>`;
-    })()}
       <div class="empty">${svg("i-books")}<h3>Nothing saved yet</h3>
       <p>Save a paper from any search and it is kept with its study design and your own note.${
         accounts ? " Signed out, that means this browser only." : " It stays in this browser; clearing your browser data clears this."}</p>
@@ -1615,6 +1728,7 @@ function renderList(){
       ? "Synced to your account, and exportable whenever you want a copy of your own."
       : "Kept in this browser. Export them before you switch computer."}</p>
     ${syncBanner()}
+    ${integrityBanner(all)}
     <div class="filters" style="padding-bottom:16px;border-bottom:1px solid var(--line-soft);margin-top:16px">
       <label class="sr" for="f-coll">Collection</label>
       <select class="sel" id="f-coll">
@@ -1716,6 +1830,18 @@ function renderAbout(){
     by the test suite in the repository, so it is not a claim you have to take on trust.
     What it does not cover: the sample stops at 2023, so it says nothing about how the very
     newest records are handled, and those are exactly the ones most likely to be unindexed.</p>
+
+    <h2>Retractions, and where the flags come from</h2>
+    <p>A paper is flagged as retracted from two places. Europe PMC and OpenAlex say so in the
+    record itself, which is what you see during a search. Saved papers are then rechecked
+    against <a href="https://www.crossref.org" target="_blank" rel="noopener">Crossref</a>,
+    which has carried the
+    <a href="https://retractionwatch.com" target="_blank" rel="noopener">Retraction Watch</a>
+    database since 2023, whenever a reading list is opened or exported. A flag read on the day
+    you saved a paper is a fact about that day, and journals retract papers afterwards.</p>
+    <p>Two limits worth knowing. A paper with no DOI cannot be checked this way, and the
+    reading list says how many of yours those are. And no warning is not the same as a clean
+    bill of health: it means nothing was found, in the databases that were asked.</p>
 
     <h2>What it does not do</h2>
     <ul>
@@ -2189,9 +2315,16 @@ async function exportPlotImage(){
   }
 }
 
+/* Exports check first. A reference entering someone's manuscript is the last moment this
+   can be caught, and the one where getting it wrong costs most. */
+async function beforeExport(rows){
+  try { await checkIntegrity(rows); } catch (e) {}
+}
+
 async function exportTable(){
   const rows = listRows();
   if (!rows.length) { toast("Nothing to export with these filters."); return; }
+  await beforeExport(rows);
   const cite = EDCITE();
   if (typeof cite.toTableDocxBlob !== "function") { toast("Export isn't available in this build."); return; }
   S.exporting = true; render();
@@ -2208,6 +2341,7 @@ async function exportTable(){
 async function exportDocx(){
   const rows = listRows();
   if (!rows.length) { toast("Nothing to export with these filters."); return; }
+  await beforeExport(rows);
   const cite = EDCITE();
   if (typeof cite.toDocxBlob !== "function") { toast("Export isn't available in this build."); return; }
   S.exporting = true; render();
@@ -2379,9 +2513,13 @@ document.addEventListener("click", (ev) => {
   if (t.dataset.export) {
     const rows = listRows();
     if (!rows.length) { toast("Nothing to export."); return; }
-    if (t.dataset.export === "bib") download("evidence-desk.bib", bibtex(rows), "application/x-bibtex");
-    else download("evidence-desk.ris", ris(rows), "application/x-research-info-systems");
-    toast(`${rows.length} record${rows.length === 1 ? "" : "s"} exported.`);
+    const kind = t.dataset.export;
+    /* Same check as the Word exports: these are the two that feed a reference manager. */
+    beforeExport(rows).then(() => {
+      if (kind === "bib") download("evidence-desk.bib", bibtex(rows), "application/x-bibtex");
+      else download("evidence-desk.ris", ris(rows), "application/x-research-info-systems");
+      toast(`${rows.length} record${rows.length === 1 ? "" : "s"} exported.`);
+    });
     return;
   }
 

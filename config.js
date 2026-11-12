@@ -28,5 +28,18 @@ window.ED_CONFIG = {
 
   // Shown in the privacy notice so people know who holds their data. Required by UK GDPR
   // if you run this with accounts switched on.
-  contactEmail: "alexanderchohj@gmail.com"
+  contactEmail: "alexanderchohj@gmail.com",
+
+  // An email address sent to Crossref and Unpaywall with each lookup. Both ask for one so
+  // they can contact whoever is making the requests; Unpaywall refuses to answer without
+  // it, and rejects obvious placeholders.
+  //
+  // READ THIS BEFORE FILLING IT IN. The call is made by each visitor's browser, so this
+  // address is sent to Crossref and Unpaywall by everyone who uses the site, and it is
+  // readable by anyone who opens the developer tools. Use an address you are content to
+  // publish, not a personal one you would rather keep quiet.
+  //
+  // Left blank, the retraction recheck still works, because Crossref answers without it.
+  // The Unpaywall free-copy lookup stays switched off, because Unpaywall will not answer.
+  apiContact: ""
 };
