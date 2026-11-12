@@ -1966,8 +1966,17 @@ function bibtex(rows){
       p.journal ? `  journal = {${clean(p.journal)}}` : null,
       p.year ? `  year = {${p.year}}` : null,
       p.doi ? `  doi = {${clean(p.doi)}}` : null,
-      p.pmid ? `  note = {PMID: ${clean(p.pmid)}}` : null,
-      `  keywords = {${clean(p.design)}}`
+      /* The retraction has to travel with the reference. A bibliography exported into
+         Zotero or BibTeX was carrying no trace of it, while the Word version marked it in
+         red, so the one warning that matters most was lost at exactly the moment the
+         reference entered someone's manuscript. */
+      [p.retracted ? "RETRACTED" : null, p.preprint ? "Preprint, not peer reviewed" : null,
+       p.pmid ? `PMID: ${clean(p.pmid)}` : null].filter(Boolean).length
+        ? `  note = {${[p.retracted ? "RETRACTED: do not cite as evidence" : null,
+                       p.preprint ? "Preprint, not peer reviewed" : null,
+                       p.pmid ? `PMID: ${clean(p.pmid)}` : null].filter(Boolean).join(". ")}}`
+        : null,
+      `  keywords = {${[clean(p.design), p.retracted ? "RETRACTED" : null].filter(Boolean).join(", ")}}`
     ].filter(Boolean).join(",\n");
     return `@article{${key},\n${f}\n}`;
   }).join("\n\n") + "\n";
@@ -1983,7 +1992,12 @@ function ris(rows){
     if (p.pmid) l.push("AN  - " + p.pmid);
     if (p.abstract) l.push("AB  - " + p.abstract.replace(/\s+/g, " "));
     l.push("KW  - " + p.design);
-    if (p.note) l.push("N1  - " + p.note.replace(/\s+/g, " "));
+    if (p.retracted) l.push("KW  - RETRACTED");
+    /* Same reason as the BibTeX note above: this is the field a reference manager shows. */
+    const warn = [p.retracted ? "RETRACTED: do not cite as evidence" : null,
+                  p.preprint ? "Preprint, not peer reviewed" : null].filter(Boolean).join(". ");
+    if (warn) l.push("N1  - " + warn);
+    if (p.note) l.push((warn ? "N2  - " : "N1  - ") + p.note.replace(/\s+/g, " "));
     l.push("ER  - ");
     return l.join("\n");
   }).join("\n\n") + "\n";

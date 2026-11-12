@@ -119,12 +119,24 @@ function trialRef(p, style){
 /* Wraps the style formatters so an integrity marker rides along into the document.
    A retracted paper that exports looking like any other reference is the exact failure
    this flag exists to prevent, so the marker is loud and leads the entry. */
+/* Each piece of a reference carries its own spacing, so a piece that turns out to be
+   absent can leave a double space or a space before the full stop. Rather than thread that
+   through every branch, the finished runs are tidied once, here, where the retraction
+   prefix and the preprint suffix have also been added. */
+function tidy(runs){
+  const out = runs.filter(r => r.t !== "").map(r => ({...r}));
+  for (let i = 1; i < out.length; i++)
+    if (/\s$/.test(out[i - 1].t)) out[i].t = out[i].t.replace(/^\s+/, "");
+  if (out.length) out[out.length - 1].t = out[out.length - 1].t.replace(/\s+$/, "");
+  return out.filter(r => r.t !== "");
+}
+
 function format(p, style){
   const runs = formatBase(p, style);
-  if (p.retracted) return [{t:"[RETRACTED] ", warn:true}, ...runs];
-  if (p.concern)   return [{t:"[EXPRESSION OF CONCERN] ", warn:true}, ...runs];
-  if (p.preprint)  return [...runs, {t:" Preprint, not peer reviewed."}];
-  return runs;
+  if (p.retracted) return tidy([{t:"[RETRACTED] ", warn:true}, ...runs]);
+  if (p.concern)   return tidy([{t:"[EXPRESSION OF CONCERN] ", warn:true}, ...runs]);
+  if (p.preprint)  return tidy([...runs, {t:" Preprint, not peer reviewed."}]);
+  return tidy(runs);
 }
 
 function formatBase(p, style){
@@ -139,23 +151,30 @@ function formatBase(p, style){
   const pg = pagesOf(p);
   const doi = clean(p.doi);
 
+  /* The closing full stop belongs to the source details, not to the title. A record with
+     no journal, which preprints and database entries often are, was ending "Title. ." in
+     APA and "'Title', ." in Harvard. */
   if (style === "apa7") {
-    const runs = [{t: `${apaAuthors(list)}${apaAuthors(list) ? " " : ""}(${yr}). ${title}. `}];
-    if (jrnlFull) runs.push({t: jrnlFull, i: true});
+    const aa = apaAuthors(list);
+    const runs = [{t: `${aa}${aa ? " " : ""}(${yr}). ${title}. `}];
+    let tail = false;
+    if (jrnlFull) { runs.push({t: jrnlFull, i: true}); tail = true; }
     if (clean(p.volume)) { runs.push({t: ", "}); runs.push({t: clean(p.volume), i: true});
-      if (clean(p.issue)) runs.push({t: `(${clean(p.issue)})`}); }
-    if (pg) runs.push({t: `, ${pg}`});
-    runs.push({t: "."});
+      if (clean(p.issue)) runs.push({t: `(${clean(p.issue)})`}); tail = true; }
+    if (pg) { runs.push({t: `, ${pg}`}); tail = true; }
+    if (tail) runs.push({t: "."});
     if (doi) runs.push({t: ` https://doi.org/${doi}`});
     return runs;
   }
 
   if (style === "harvard") {
-    const runs = [{t: `${harvardAuthors(list)}${harvardAuthors(list) ? " " : ""}(${yr}) '${title}', `}];
-    if (jrnlFull) runs.push({t: jrnlFull, i: true});
-    if (vi) runs.push({t: `, ${vi}`});
-    if (pg) runs.push({t: `, pp. ${pg}`});
-    runs.push({t: "."});
+    const ha = harvardAuthors(list);
+    const runs = [{t: `${ha}${ha ? " " : ""}(${yr}) '${title}'${jrnlFull ? "," : "."} `}];
+    let tail = false;
+    if (jrnlFull) { runs.push({t: jrnlFull, i: true}); tail = true; }
+    if (vi) { runs.push({t: `, ${vi}`}); tail = true; }
+    if (pg) { runs.push({t: `, pp. ${pg}`}); tail = true; }
+    if (tail) runs.push({t: "."});
     if (doi) runs.push({t: ` doi: ${doi}.`});
     return runs;
   }
