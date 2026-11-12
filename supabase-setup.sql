@@ -1,4 +1,4 @@
--- Evidence Desk — database setup for optional account sync.
+-- Conspectus — database setup for optional account sync.
 --
 -- Run this once in your Supabase project: SQL Editor → New query → paste → Run.
 -- It is safe to run more than once.

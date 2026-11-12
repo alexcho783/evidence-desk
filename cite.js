@@ -1,4 +1,4 @@
-/* Evidence Desk — reference formatting and .docx export.
+/* Conspectus — reference formatting and .docx export.
  *
  * Self-contained: takes saved records and produces formatted references in a chosen style,
  * either as text or as a Word document. The docx library is ~1.3 MB, so it is fetched only
@@ -273,7 +273,7 @@ async function toDocxBlob(name, rows, styleKey){
   }
   children.push(new d.Paragraph({
     children: [new d.TextRun({
-      text: `${sorted.length} reference${sorted.length === 1 ? "" : "s"} · ${style.label} · exported from Evidence Desk. Check every reference before submitting.`,
+      text: `${sorted.length} reference${sorted.length === 1 ? "" : "s"} · ${style.label} · exported from Conspectus. Check every reference before submitting.`,
       size: 16, color: "888888"
     })],
     spacing: {before: 400}
@@ -347,7 +347,7 @@ async function toTableDocxBlob(name, rows, want){
         spacing: {after: 200}}),
       new d.Table({width: {size: 100, type: d.WidthType.PERCENTAGE}, rows: [header, ...body]}),
       new d.Paragraph({children: [new d.TextRun({
-        text: `${sorted.length} stud${sorted.length === 1 ? "y" : "ies"} · exported from Evidence Desk. Designs are as indexed, not as judged; check each one.`
+        text: `${sorted.length} stud${sorted.length === 1 ? "y" : "ies"} · exported from Conspectus. Designs are as indexed, not as judged; check each one.`
           + (cols.some(c => c.k === "country") ? " Country is the last part of the first author's affiliation, which is a guess, not a study location." : ""),
         size: 16, color: "888888"})], spacing: {before: 300}})
     ]

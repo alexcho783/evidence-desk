@@ -1,4 +1,9 @@
-# Evidence Desk — public edition
+# Conspectus — public edition
+
+Formerly Evidence Desk. The rename is cosmetic: the repository folder, the GitHub remote and
+the published URL are unchanged, and so are the browser storage keys, so nobody loses a
+reading list over it. Renaming those is a separate decision, and the live URL breaks the
+moment it is taken.
 
 A medical literature search that sorts what it finds by **what kind of study each paper is**,
 rather than only by relevance. Every result is placed on a grid: study-design strength down the
@@ -56,15 +61,15 @@ It is a static site, so anything that serves files will host it.
 **GitHub Pages** — free, and gives you a `github.io` address:
 
 ```bash
-git init && git add -A && git commit -m "Evidence Desk"
+git init && git add -A && git commit -m "Conspectus"
 ```
 
 ```bash
-gh repo create evidence-desk --public --source=. --push
+gh repo create conspectus --public --source=. --push
 ```
 
 Then in the repository, **Settings → Pages → Source: Deploy from a branch → main / (root)**.
-It appears at `https://<your-username>.github.io/evidence-desk/` within a minute or two.
+It appears at `https://<your-username>.github.io/conspectus/` within a minute or two.
 
 **Netlify or Cloudflare Pages** — drag the folder onto their dashboard. No build command, no
 publish directory to set.
@@ -269,7 +274,7 @@ grants nothing on its own; row-level security is what keeps one person's rows aw
 everyone else. Never put the `service_role` key here: it bypasses those policies entirely.
 
 **4. Set the redirect URL.** In Authentication → URL Configuration, set Site URL to where the
-site is actually served (for example `https://yourname.github.io/evidence-desk/`) and add it
+site is actually served (for example `https://yourname.github.io/conspectus/`) and add it
 under Redirect URLs. Sign-in links bounce off this, so a wrong value here is the usual reason
 a link lands on a blank page.
 

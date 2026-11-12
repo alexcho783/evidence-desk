@@ -1,4 +1,4 @@
-/* Evidence Desk — the classifier, on its own and with no DOM
+/* Conspectus — the classifier, on its own and with no DOM
  *
  * Kept apart from app.js so it can be run under `node --test` against a fixture of real
  * MEDLINE records. Nothing here touches the document, fetches anything or reads state:

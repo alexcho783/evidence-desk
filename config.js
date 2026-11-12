@@ -1,4 +1,4 @@
-/* Evidence Desk — account sync configuration.
+/* Conspectus — account sync configuration.
  *
  * Accounts are OPTIONAL. Leave this file exactly as it is and the site works the way it
  * always has: everything in the browser, no sign-in, nothing transmitted. Fill the two

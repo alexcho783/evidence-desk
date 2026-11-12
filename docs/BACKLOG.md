@@ -1,4 +1,4 @@
-# Evidence Desk — feature backlog
+# Conspectus — feature backlog
 
 From *Functions worth adding: detailed specifications*, the companion to the code review,
 11 November 2026. Kept here so a future build can start from the specification rather than
@@ -286,7 +286,7 @@ the marker. Across the 312-record validation set that is 50 confident, 47 uncert
 
 ## Sources
 
-- Live testing of Evidence Desk and direct calls to Europe PMC (search, citations and
+- Live testing of Conspectus and direct calls to Europe PMC (search, citations and
   references endpoints), OpenAlex and ClinicalTrials.gov, 11 November 2026.
 - Crossref on Retraction Watch data in the REST API:
   crossref.org/documentation/retrieve-metadata/retraction-watch

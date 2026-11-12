@@ -1,4 +1,4 @@
-/* Evidence Desk — optional account sync.
+/* Conspectus — optional account sync.
  *
  * Wraps Supabase auth and one table. Loads nothing and does nothing unless config.js
  * carries a project URL and anon key, so the account-free build stays exactly as it was:

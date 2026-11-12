@@ -1,4 +1,4 @@
-/* Evidence Desk — public edition
+/* Conspectus — public edition
  * Literature from Europe PMC (https://europepmc.org). No tracking, and no AI anywhere.
  * Accounts are optional and off unless config.js is filled in.
  * Reading list and notes persist in localStorage; recent searches are session-scoped.
@@ -1611,7 +1611,7 @@ async function loadMore(){
 
 function errCopy(e){
   switch (e.kind) {
-    case "offline":  return {t:"You're offline", d:"Evidence Desk reads its sources live, so it needs a connection. Your reading list still works offline.", retry:true};
+    case "offline":  return {t:"You're offline", d:"Conspectus reads its sources live, so it needs a connection. Your reading list still works offline.", retry:true};
     case "network":  return {t:`Couldn't reach ${src().db}`, d:"The request didn't get through. This is usually temporary.", retry:true};
     case "badquery": return {t:`${src().db} couldn't read that query`, d:"An unmatched quote or bracket will do it. Try plain words, or check the search tips under How it ranks.", retry:false};
     case "psyquota": return {t:"Psychology search has reached today's free limit",
@@ -2292,7 +2292,7 @@ function renderAbout(){
   $("view-about").innerHTML = `<div class="eyebrow">How it ranks</div>
   <h1 class="hero-h" style="font-size:clamp(24px,3.4vw,31px)">Where each paper lands, and why</h1>
   <div class="prose" style="margin-top:20px">
-    <p>Evidence Desk does not score papers or tell you what to conclude. It does one thing: it sorts what a search returns by <b>the kind of study each paper is</b>, because that is the first question worth asking about any clinical claim and the one a plain list of titles hides.</p>
+    <p>Conspectus does not score papers or tell you what to conclude. It does one thing: it sorts what a search returns by <b>the kind of study each paper is</b>, because that is the first question worth asking about any clinical claim and the one a plain list of titles hides.</p>
 
     <h2>The rows</h2>
     <div class="ladder">
@@ -2651,7 +2651,7 @@ function renderPrivacy(){
   $("view-privacy").innerHTML = `<div class="eyebrow">Privacy</div>
   <h1 class="hero-h" style="font-size:clamp(24px,3.4vw,31px)">What this site stores</h1>
   <div class="prose" style="margin-top:20px">
-    <p>Evidence Desk is built to hold as little about you as it can. Searching needs no account, and
+    <p>Conspectus is built to hold as little about you as it can. Searching needs no account, and
       without one nothing about you is stored anywhere except your own browser.</p>
 
     <h2>Without an account</h2>
@@ -2844,7 +2844,7 @@ function timelineSvg(rows){
   for (let y = Math.ceil(lo / step) * step; y <= hi; y += step)
     o += `<text x="${x(y)}" y="${TOP + RH * rowsT.length + 16}" font-size="10" fill="#8A94A3" text-anchor="middle">${y}</text>`;
   o += `<text x="${PAD}" y="${H - 14}" font-size="10.5" fill="#8A94A3">marks are the ${rows.length} listed papers at their own year`
-     + `${idx ? "; shading is how much Europe PMC has indexed in each era" : ""} · Evidence Desk</text>`;
+     + `${idx ? "; shading is how much Europe PMC has indexed in each era" : ""} · Conspectus</text>`;
   return o + `</svg>`;
 }
 
@@ -2917,7 +2917,7 @@ function plotSvg(rows){
   o += `<line x1="${PAD + LAB - 10}" y1="${TOP - 1}" x2="${PAD + LAB - 10}" y2="${TOP + RH * rowsT.length}" stroke="#E6EBF1"/>`;
   o += `<text x="${PAD}" y="${H - 22}" font-size="10.5" fill="#8A94A3">${idx
     ? `numbers = records indexed by Europe PMC · marks = the ${rows.length} listed papers, counted separately`
-    : `${placed.length} of ${rows.length} records placed`} · higher rows carry more weight · Evidence Desk</text>`;
+    : `${placed.length} of ${rows.length} records placed`} · higher rows carry more weight · Conspectus</text>`;
   o += `</svg>`;
   return o;
 }
@@ -3163,8 +3163,8 @@ document.addEventListener("click", (ev) => {
     const kind = t.dataset.export;
     /* Same check as the Word exports: these are the two that feed a reference manager. */
     beforeExport(rows).then(() => {
-      if (kind === "bib") download("evidence-desk.bib", bibtex(rows), "application/x-bibtex");
-      else download("evidence-desk.ris", ris(rows), "application/x-research-info-systems");
+      if (kind === "bib") download("conspectus.bib", bibtex(rows), "application/x-bibtex");
+      else download("conspectus.ris", ris(rows), "application/x-research-info-systems");
       toast(`${rows.length} record${rows.length === 1 ? "" : "s"} exported.`);
     });
     return;
