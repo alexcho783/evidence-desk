@@ -41,19 +41,22 @@ const SOURCES = {
     label:"Medicine", short:"Med", db:"Europe PMC",
     ladder:["synthesis","guideline","trial","cohort","case","preclinical","narrative"],
     overrides:{},
-    placeholder:"Ask a clinical question, or paste a DOI or PMID"
+    placeholder:"Ask a clinical question, or paste a DOI or PMID",
+    working:"Reading publication types so each paper lands in the right row"
   },
   psy: {
     label:"Psychology", short:"Psy", db:"OpenAlex",
     ladder:["synthesis","trial","experiment","cohort","survey","qualitative","case","narrative"],
     overrides:{ cohort:{label:"Longitudinal", note:"Prospective · follow-up", noun:["longitudinal study","longitudinal studies"]} },
-    placeholder:"Ask a psychology question, or paste a DOI"
+    placeholder:"Ask a psychology question, or paste a DOI",
+    working:"Reading titles and abstracts, because OpenAlex carries no publication types"
   },
   trials: {
     label:"Trials", short:"Trials", db:"ClinicalTrials.gov",
     ladder:["phase3","phase4","obsreg","phase2","phase1","nophase"],
     overrides:{},
-    placeholder:"Search trials by condition or drug"
+    placeholder:"Search trials by condition or drug",
+    working:"Reading each registration for its phase and whether it ever reported"
   }
 };
 
@@ -1176,8 +1179,8 @@ function renderSearch(){
 
   const working = S.busy ? `<div class="working" role="status" aria-live="polite">
     <span class="spin" aria-hidden="true"></span>
-    <div><div class="working-t">Searching Europe PMC</div>
-    <div class="working-s">Reading publication types so each paper lands in the right row</div></div></div>` : "";
+    <div><div class="working-t">Searching ${esc(src().db)}</div>
+    <div class="working-s">${esc(src().working)}</div></div></div>` : "";
 
   let err = "";
   if (S.err) {
