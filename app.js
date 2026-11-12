@@ -1087,6 +1087,57 @@ async function citesOf(srcCode, id, label){
   render();
 }
 
+/* ══ Unpaywall: a legal free copy Europe PMC does not know about ═══════════════════════
+ *
+ * Many subscription papers have an accepted manuscript sitting in a university repository.
+ * Europe PMC does not link those; Unpaywall indexes them. Asked only when a sheet opens
+ * and only when the paper has no free link already, so it is never a request per result.
+ *
+ * Unpaywall requires an email address and rejects obvious placeholders: test@example.com
+ * returns 422. That address would be sent by every visitor's browser, so it lives in
+ * config.js as apiContact, is blank by default, and this feature stays switched off until
+ * someone decides to fill it in. Nothing here falls back to a personal address.
+ *
+ * The version matters and is always shown. An accepted manuscript is the peer-reviewed
+ * text before the publisher's typesetting, so page numbers can differ from the version of
+ * record, which is the one a reader should cite.
+ */
+const UNPAYWALL = "https://api.unpaywall.org/v2/";
+const oaCache = new Map();
+
+function apiContact(){ return String((window.ED_CONFIG || {}).apiContact || "").trim(); }
+
+const OA_VERSION = {
+  publishedVersion: "published version",
+  acceptedVersion:  "accepted manuscript",
+  submittedVersion: "submitted manuscript, not peer reviewed"
+};
+
+async function findFreeCopy(p){
+  if (!p || !p.doi || p.freeFullText) return;
+  const mail = apiContact();
+  if (!mail) return;                       /* switched off until an address is configured */
+  if (oaCache.has(p.doi)) return;
+  oaCache.set(p.doi, null);
+  try {
+    const r = await fetch(UNPAYWALL + encodeURIComponent(p.doi) + "?email=" + encodeURIComponent(mail),
+                          {headers:{Accept:"application/json"}});
+    if (!r.ok) return;
+    const d = await r.json();
+    const loc = d && d.best_oa_location;
+    if (!loc || !loc.url) return;
+    const found = {
+      url: loc.url,
+      version: OA_VERSION[loc.version] || "free copy",
+      host: loc.host_type === "repository" ? "a repository" : "the publisher's own site",
+      licence: loc.license || ""
+    };
+    oaCache.set(p.doi, found);
+    /* The sheet may have moved on while this was in the air. */
+    if (S.open && S.open.doi === p.doi) { S.open.unpaywall = found; renderSheet(); }
+  } catch (e) { /* blocked or down: the sheet simply does not gain a link */ }
+}
+
 /* ══ Start here: the most recent synthesis ═══════════════════════════════════════════
  *
  * For a clinical question the usual best place to begin is a recent systematic review, and
@@ -1961,6 +2012,10 @@ function renderSheet(){
   /* One request, only on opening a sheet. refCount() de-duplicates and fills the button
      in place when the answer arrives. */
   if (S.open && S.open.epmcId) refCount(S.open.epmcSource || "MED", S.open.epmcId);
+  if (S.open && !S.open.unpaywall) {
+    const hit = S.open.doi && oaCache.get(S.open.doi);
+    if (hit) S.open.unpaywall = hit; else findFreeCopy(S.open);
+  }
   const root = $("sheet-root");
   if (S.signIn) { renderSignInSheet(); return; }
   if (!S.open) { root.innerHTML = ""; return; }
@@ -2015,6 +2070,9 @@ function renderSheet(){
     <div class="sheet-top">
       <h2>Paper</h2>
       ${p.fullText ? `<a class="btn btn-sm" href="${esc(p.fullText)}" target="_blank" rel="noopener">${svg("i-link")}Full text</a>` : ""}
+      ${!p.fullText && !p.freeFullText && p.unpaywall ? `<a class="btn btn-sm" href="${esc(p.unpaywall.url)}" target="_blank" rel="noopener"
+        title="Found through Unpaywall, on ${esc(p.unpaywall.host)}. An accepted manuscript is the peer-reviewed text before typesetting, so pages may differ from the version of record, which is the one to cite.">
+        ${svg("i-link")}Free: ${esc(p.unpaywall.version)}</a>` : ""}
       <a class="btn btn-sm" href="${esc(p.epmc)}" target="_blank" rel="noopener">${svg("i-link")}Europe PMC</a>
       <button class="icon-btn" id="sheet-x" type="button" aria-label="Close">${svg("i-x")}</button>
     </div>
