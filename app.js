@@ -119,6 +119,18 @@ const TIER_TYPE = {
 };
 const COUNT_CONCURRENCY = 6;   /* Europe PMC asks for no more than about 10 requests a second */
 
+/* N19. Design is not quality, and this is as close as the site goes to saying so without
+   inventing a score: a trial of twelve people should not draw the same mark as a trial of
+   twelve thousand. It applies only to primary studies, never to a synthesis, where the
+   number in the abstract is a count of studies or of pooled participants rather than of
+   people recruited, and only when the sample size was read confidently. An unknown sample
+   must never look small. */
+const SMALL_N = 50;
+const PRIMARY_TIERS = ["trial","cohort","case","experiment","survey","qualitative",
+                       "phase1","phase2","phase3","phase4","obsreg"];
+const isSmall = p => p && p.nSure === true && typeof p.n === "number" && p.n < SMALL_N
+  && PRIMARY_TIERS.includes(p.tier);
+
 /* B3: these filters used to send a PUB_TYPE query and nothing else, so a paper Europe PMC
    had not indexed yet could not survive one, however plainly its own title said what it
    was. Selecting "Trials only" quietly removed every recent trial.
@@ -501,6 +513,7 @@ function fromInverted(inv){
 
 function normalisePsy(w){
   const abstract = fromInverted(w.abstract_inverted_index);
+  const psySize = findN({abstractText: abstract});
   const title = plain(String(w.display_name || w.title || "Untitled")).replace(/\.$/, "");
   const c = classifyPsy(title, abstract, w.type);
   const srcInfo = (w.primary_location && w.primary_location.source) || {};
@@ -520,7 +533,7 @@ function normalisePsy(w){
     design: c.design, tier: c.tier,
     designSrc: c.fromType ? "oatype" : "inferred",
     designWhy: c.because || "",
-    n: findN({abstractText: abstract}),
+    n: psySize.n, nSure: psySize.sure,
     url: doi ? "https://doi.org/" + doi : (w.id || ""),
     epmc: w.id || "",
     fullText: ((w.best_oa_location || {}).landing_page_url) || "",
@@ -716,6 +729,7 @@ function normalise(r){
   const cc = ((((r.commentCorrectionList || {}).commentCorrection) || [])
     .map(x => String(x.type || "").toLowerCase()));
   const c = classify(r);
+  const size = findN(r);
   const year = r.pubYear ? parseInt(r.pubYear, 10) : null;
   const authors = dec(r.authorString || "");
   const ftAll = ((r.fullTextUrlList && r.fullTextUrlList.fullTextUrl) || []);
@@ -737,7 +751,7 @@ function normalise(r){
     openAccess: r.isOpenAccess === "Y",
     abstract: absText,
     design: c.design, tier: c.tier, designSrc: c.src, designWhy: c.because || "",
-    n: findN(r),
+    n: size.n, nSure: size.sure,
     url: r.doi ? "https://doi.org/" + r.doi
        : r.pmid ? "https://pubmed.ncbi.nlm.nih.gov/" + r.pmid + "/"
        : "https://europepmc.org/article/" + (r.source || "MED") + "/" + (r.id || ""),
@@ -1279,7 +1293,12 @@ function chips(p){
       ? `<span class="chip" data-k="posted">Results posted</span>`
       : `<span class="chip" data-k="unposted">No results posted</span>`);
   }
-  if (p.n) c.push(`<span class="chip" data-k="n">${p.source === "trials" ? "enrolled " : "n = "}${p.n.toLocaleString()}</span>`);
+  /* The sample size chip carries the small-study marker rather than a second chip beside
+     it saying the same number twice. A small study is not a wrong study, so the wording
+     notes the size and leaves the judgement to the reader. */
+  if (p.n) c.push(`<span class="chip" data-k="${isSmall(p) ? "small" : "n"}"${isSmall(p)
+    ? ` title="Fewer than ${SMALL_N} participants. A result from ${esc(String(p.n))} people carries less weight than the same result from thousands."` : ""
+    }>${p.source === "trials" ? "enrolled " : "n = "}${p.n.toLocaleString()}${isSmall(p) ? ", small" : ""}</span>`);
   for (const t of (p.tags || [])) c.push(`<span class="chip" data-k="tag">${esc(t)}</span>`);
   return `<div class="chips">${c.join("")}</div>`;
 }
@@ -1372,9 +1391,10 @@ function plot(rows){
              >${num(n)}<i>indexed</i></button>`;
       g += `<div class="p-cell"${n ? ' data-has-count="1"' : ""}>` + countLayer + (cell.length
         ? `<span class="p-dots">` + cell.map(p => {
-            const lab = `${p.title.slice(0,70)} — ${p.design}${p.year ? `, ${p.year}` : ""}${p.n ? `, n = ${p.n}` : ""}${p.trialStatus ? `, ${p.trialStatus.toLowerCase()}` : ""}`;
+            const small = isSmall(p);
+            const lab = `${p.title.slice(0,70)} — ${p.design}${p.year ? `, ${p.year}` : ""}${p.n ? `, n = ${p.n}` : ""}${small ? ` (fewer than ${SMALL_N} participants)` : ""}${p.trialStatus ? `, ${p.trialStatus.toLowerCase()}` : ""}`;
             return `<button class="p-dot" data-w="${t.w}" data-saved="${S.list.has(p.id) ? 1 : 0}"
-              data-jump="${esc(p.id)}" title="${esc(lab)}" aria-label="${esc(lab)}"><i></i></button>`;
+              ${small ? 'data-small="1"' : ""} data-jump="${esc(p.id)}" title="${esc(lab)}" aria-label="${esc(lab)}"><i></i></button>`;
           }).join("") + `</span>`
         : (n == null ? `<span class="p-empty">—</span>` : "")) + `</div>`;
     }
@@ -1416,6 +1436,7 @@ function plot(rows){
       <span class="lg" data-w="mid"><i></i>Observational</span>
       <span class="lg" data-w="weak"><i></i>Weak or indirect</span>
       <span class="lg" data-w="saved"><i></i>Saved</span>
+      <span class="lg" data-w="small"><i></i>Fewer than ${SMALL_N} participants</span>
       <span style="color:var(--faint)">Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper.</span>
       ${idx ? `<span class="lg" data-w="count"><i></i>Indexed total</span>` : ""}
       <span style="flex-basis:100%;color:var(--faint)">${idx
@@ -2128,7 +2149,11 @@ function plotSvg(rows){
       cell.slice(0, 18).forEach((pp, i) => {
         const cx = x0 + (i % 9) * 19 + 6;
         const cy = baseY + (cell.length > 9 && n == null ? (i < 9 ? -9 : 9) : 0);
-        o += `<circle cx="${cx}" cy="${cy}" r="${n != null ? 4.5 : 6}" fill="${FILL[t.w] || FILL.weak}"/>`;
+        const rr = n != null ? 4.5 : 6;
+        /* Hollow, not absent: a small study is still a study. */
+        o += isSmall(pp)
+          ? `<circle cx="${cx}" cy="${cy}" r="${rr - 0.75}" fill="#ffffff" stroke="${FILL[t.w] || FILL.weak}" stroke-width="1.5"/>`
+          : `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="${FILL[t.w] || FILL.weak}"/>`;
       });
     });
   });

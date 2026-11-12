@@ -345,6 +345,14 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .p-dot[data-w="mid"] i{background:var(--mid)}
 .p-dot[data-w="weak"] i{background:var(--mid-soft); border-color:var(--mid)}
 .p-dot[data-saved="1"] i{box-shadow:0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent)}
+/* N19: a small primary study is drawn hollow. Hollow rather than absent, and never for an
+   unknown sample size, which must not be made to look small. */
+.p-dot[data-small="1"] i{background:transparent !important; border-width:2px}
+.p-dot[data-small="1"][data-w="strong"] i{border-color:var(--strong)}
+.p-dot[data-small="1"][data-w="mid"] i{border-color:var(--mid)}
+.p-dot[data-small="1"][data-w="weak"] i{border-color:var(--mid)}
+.plot-legend .lg[data-w="small"] i{background:transparent; border:2px solid var(--muted)}
+.chip[data-k="small"]{background:transparent; border-style:dashed; color:var(--muted)}
 .p-empty{font-size:11px; color:var(--line); font-family:var(--f-data)}
 
 /* B1: the indexed total for a cell, kept visually apart from the dots because it is a

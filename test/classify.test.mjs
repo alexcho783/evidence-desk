@@ -263,9 +263,50 @@ test("classifyPsy says which phrase produced the label", () => {
 });
 
 test("findN pulls a sample size out, or nothing", () => {
-  assert.equal(findN({abstractText: "A total of 6425 patients were enrolled."}), 6425);
-  assert.equal(findN({abstractText: "We randomised participants (n = 1,200) to two arms."}), 1200);
-  assert.equal(findN({abstractText: "No numbers here at all."}), null);
-  assert.equal(findN({abstractText: "In 1 patient the drug failed."}), null, "1 is not a sample");
-  assert.equal(findN({}), null);
+  const n = t => findN({abstractText: t}).n;
+  assert.equal(n("A total of 6425 patients were enrolled."), 6425);
+  assert.equal(n("We randomised participants (n = 1,200) to two arms."), 1200);
+  assert.equal(n("No numbers here at all."), null);
+  assert.equal(n("In 1 patient the drug failed."), null, "1 is not a sample");
+  assert.equal(findN({}).n, null);
+});
+
+test("findN says when the number is only a guess", () => {
+  /* A bare "n = " is very often a subgroup, and the marker that depends on this must not
+     draw a 1,407-person study as a small one because it found a 494-person phenotype. */
+  const sub = findN({abstractText:
+    "Among 1,407 young women with heart failure, four phenotypes were identified: " +
+    "hypertensive pregnancy (n=494), cardiorenal (n=276)."});
+  assert.equal(sub.n, 1407, "the total, not the first subgroup");
+  assert.equal(sub.sure, true);
+
+  for (const [t, nn] of [
+    ["In this open-label trial, 6425 patients were randomly assigned to dexamethasone.", 6425],
+    ["We enrolled 38 adults with CMT1A.", 38],
+    ["The sample of 212 students completed the task.", 212],
+    ["Of 2,500 older adults screened, 1,200 entered the study.", 2500]
+  ]) {
+    const r = findN({abstractText: t});
+    assert.equal(r.n, nn, t.slice(0, 44));
+    assert.equal(r.sure, true, `should be confident: ${t.slice(0, 44)}`);
+  }
+
+  /* Wakefield 1998, which is what the small-study marker is tested against. The number is
+     separated from its verb by a parenthetical, and the children were referred rather than
+     enrolled, both of which an earlier version of this missed. */
+  const wake = findN({abstractText:
+    "12 children (mean age 6 years [range 3-10], 11 boys) were referred to a " +
+    "paediatric gastroenterology unit with a history of normal development."});
+  assert.equal(wake.n, 12);
+  assert.equal(wake.sure, true);
+
+  /* No announcement of a total means no confidence, whatever number turns up. */
+  const guess = findN({abstractText: "Responses in the placebo arm (n = 31) were lower."});
+  assert.equal(guess.n, 31);
+  assert.equal(guess.sure, false);
+
+  /* Nothing found must never read as a small study. */
+  const none = findN({abstractText: "The author reflects on forty years of practice."});
+  assert.equal(none.n, null);
+  assert.equal(none.sure, false);
 });

@@ -129,13 +129,39 @@ export function classify(r){
   return {design:"Design unclear", tier:"narrative", src:"inferred", because: ""};
 }
 
+/* How many people were studied, and whether the number can be trusted.
+ *
+ * `sure` is the point of this. A bare "n = 494" is very often a subgroup: the abstract that
+ * prompted this said "four phenotypes were identified: hypertensive pregnancy (n=494)" in a
+ * study of 1,407 women, and the old version reported 494. Anything that drives a visual
+ * marker has to know the difference between a total it read and a number it found. */
 export function findN(r){
-  const t = (r.abstractText || "");
-  const m = t.match(/\bn\s*=\s*([\d,]{1,9})/i)
-         || t.match(/([\d,]{2,9})\s+(?:patients|participants|subjects|individuals|adults|children|women|men)\b/i);
-  if (!m) return null;
-  const v = parseInt(m[1].replace(/,/g, ""), 10);
-  return Number.isFinite(v) && v > 1 && v < 1e8 ? v : null;
+  const t = String(r.abstractText || "");
+  const num = m => {
+    if (!m) return null;
+    const v = parseInt(String(m[1]).replace(/,/g, ""), 10);
+    return Number.isFinite(v) && v > 1 && v < 1e8 ? v : null;
+  };
+
+  /* A total announces itself: someone enrolled, randomised or recruited this many. */
+  const confident =
+       num(t.match(/\ba total of\s+([\d,]{2,9})/i))
+    || num(t.match(/\bwe\s+(?:enrolled|randomi[sz]ed|recruited|included|studied|analy[sz]ed|followed)\s+(?:a total of\s+)?([\d,]{2,9})/i))
+    /* "12 children (mean age 6 years [range 3-10], 11 boys) were referred to a unit": an
+       aside can sit between the noun and the verb, and how people entered a study is not
+       always enrolment. A case series refers, admits or presents. */
+    || num(t.match(/([\d,]{2,9})\s+(?:patients|participants|subjects|individuals|adults|children|infants|women|men|cases)\s*(?:\([^)]{0,80}\)\s*)?(?:(?:were|was)\s+(?:enrolled|randomi[sz]ed|randomly (?:assigned|allocated)|recruited|included|studied|followed|analy[sz]ed|referred|admitted|assessed|identified|screened)|underwent)/i))
+    || num(t.match(/\b(?:sample|cohort|population) of\s+([\d,]{2,9})/i))
+    /* "Among 1,407 young women" and "of 2,500 older adults": an adjective or two may sit
+       between the number and the noun, which an earlier version did not allow for. */
+    || num(t.match(/\b(?:among|of)\s+([\d,]{3,9})\s+(?:[a-z-]+\s+){0,2}(?:patients|participants|adults|women|men|children|individuals|subjects)\b/i));
+  if (confident) return {n: confident, sure: true};
+
+  /* Otherwise take what there is, and say it is not certain. Several different "n = "
+     values in one abstract is the clearest sign the first one is a subgroup. */
+  const loose = num(t.match(/\bn\s*=\s*([\d,]{1,9})/i))
+             || num(t.match(/([\d,]{2,9})\s+(?:patients|participants|subjects|individuals|adults|children|women|men)\b/i));
+  return {n: loose, sure: false};
 }
 /* Psychology records arrive from OpenAlex, which carries no publication types at all, so
    there is no metadata arm here: every answer is read off the text and every caller marks
