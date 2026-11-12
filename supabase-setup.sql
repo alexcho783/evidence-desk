@@ -86,3 +86,90 @@ grant execute on function public.delete_my_account() to authenticated;
 --
 -- Should return four policies.
 -- select policyname, cmd from pg_policies where tablename = 'reading_list';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- N12: shared read-only collections
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- A named collection can be given a link that anyone can open. The design choice that
+-- matters: a shared collection is a SNAPSHOT, written at the moment you share, not a live
+-- window onto your reading list.
+--
+-- Live would mean letting an anonymous reader select rows out of reading_list, which means
+-- a policy on that table that is true for someone who is not signed in. Every such policy
+-- is one mistake away from exposing the whole table, and reading_list is where the notes
+-- live. A snapshot keeps reading_list owner-only, exactly as it is now, and puts only what
+-- you chose to publish into a separate table. Re-share to update it.
+
+create table if not exists public.shared_collections (
+  slug         text primary key,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  name         text not null,
+  papers       jsonb not null,
+  with_notes   boolean not null default false,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create index if not exists shared_collections_user_idx on public.shared_collections (user_id);
+
+-- Same reasoning as the reading list: a shared collection is not file storage.
+alter table public.shared_collections drop constraint if exists shared_collections_size;
+alter table public.shared_collections
+  add constraint shared_collections_size check (pg_column_size(papers) < 400000);
+
+alter table public.shared_collections enable row level security;
+
+drop policy if exists "anyone reads shared"    on public.shared_collections;
+drop policy if exists "insert own shared"      on public.shared_collections;
+drop policy if exists "update own shared"      on public.shared_collections;
+drop policy if exists "delete own shared"      on public.shared_collections;
+
+-- The one deliberately public read in this schema. It is safe because a row only exists
+-- here if its owner asked for it to exist, and because the row holds a copy rather than a
+-- reference: there is nothing to follow back into anyone's private data.
+create policy "anyone reads shared" on public.shared_collections
+  for select using (true);
+
+create policy "insert own shared" on public.shared_collections
+  for insert with check (auth.uid() = user_id);
+
+create policy "update own shared" on public.shared_collections
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "delete own shared" on public.shared_collections
+  for delete using (auth.uid() = user_id);
+
+-- Account deletion has to take shared collections with it. Replacing the function rather
+-- than adding a second one keeps deletion a single transaction.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'not signed in';
+  end if;
+
+  delete from public.shared_collections where user_id = uid;
+  delete from public.reading_list where user_id = uid;
+  delete from auth.users where id = uid;
+end;
+$$;
+
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;
+
+-- Check: should return two tables, both with rowsecurity = true.
+-- select tablename, rowsecurity from pg_tables
+--   where tablename in ('reading_list','shared_collections');
+--
+-- Check: the shared table should have exactly one policy whose cmd is SELECT.
+-- select policyname, cmd, qual from pg_policies where tablename = 'shared_collections';
+--
+-- Check, while signed OUT, that the private table is still private. Should return 0 rows:
+-- select count(*) from public.reading_list;

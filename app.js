@@ -287,6 +287,8 @@ const S = {
   builder:false,     /* the PICO question builder, under the search box */
   pico:{p:"", i:"", c:"", o:""},
   compare:{open:false, q:"", key:"", data:null, busy:false, err:false},
+  shared:null,      /* a read-only collection opened from a link */
+  sharing:{open:false, busy:false, slug:"", withNotes:false, note:""},
   cell:null,        /* {t, c} while the list is restricted to one cell of the grid */
   list:new Map(), recent:[],
   filter:"",
@@ -1352,6 +1354,54 @@ async function loadStartHere(signal){
   render();
 }
 
+/* ══ N12: a collection opened from a shared link ═══════════════════════════════════════
+ *
+ * Read-only, and read by someone who may not be signed in at all. Nothing here writes, and
+ * the copy button puts the papers into the reader's own list rather than joining them to
+ * anyone else's.
+ */
+async function openShared(slug){
+  S.shared = {slug, busy:true, data:null};
+  go("shared", {silent:true});
+  render();
+  const A = window.EDAuth;
+  const data = (A && A.enabled && A.openShared) ? await A.openShared(slug).catch(() => null) : null;
+  S.shared = {slug, busy:false, data};
+  render();
+}
+
+function renderShared(){
+  const sh = S.shared || {};
+  const d = sh.data;
+  if (sh.busy) {
+    $("view-shared").innerHTML = `<div class="eyebrow">Shared collection</div>
+      <div class="working" role="status"><span class="spin" aria-hidden="true"></span>
+      <div><div class="working-t">Opening the collection</div></div></div>`;
+    return;
+  }
+  if (!d) {
+    $("view-shared").innerHTML = `<div class="eyebrow">Shared collection</div>
+      <div class="empty">${svg("i-alert")}<h3>That link does not open anything</h3>
+      <p>A shared collection can be withdrawn by whoever made it, and a link that was
+      mistyped will not match anything either.</p>
+      <button class="btn btn-primary" data-go="search">${svg("i-search")}Search instead</button></div>`;
+    return;
+  }
+  const rows = d.papers || [];
+  $("view-shared").innerHTML = `<div class="eyebrow">Shared collection</div>
+    <h1 class="hero-h" style="font-size:clamp(24px,3.4vw,31px)">${esc(d.name)}</h1>
+    <div class="notice" role="status">${svg("i-info")}<div>Someone shared this with you. It is
+      a copy taken when they shared it, so it does not change when their own list does${
+      d.withNotes ? ", and they chose to include their notes" : ""}. You cannot edit it.</div></div>
+    <div class="list-head">
+      <span class="list-n">${rows.length} paper${rows.length === 1 ? "" : "s"}</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-sm btn-primary" id="copy-shared" type="button">${svg("i-plus")}Copy to my reading list</button>
+    </div>
+    ${plot(rows)}
+    <div class="cards" style="margin-top:20px">${rows.map(p => card(p, null)).join("")}</div>`;
+}
+
 /* ══ Compare two questions ═══════════════════════════════════════════════════════════
  *
  * Two evidence maps on one screen, drawn to the same scale, which is the point: one drug
@@ -1669,6 +1719,8 @@ function readUrl(){
   const cell = String(p.get("cell") || "").split("/");
   S.cell = (TIER_TYPE[cell[0]] && ERA_COLS.some(c => c.k === cell[1]))
     ? {t: cell[0], c: cell[1]} : null;
+  const share = (p.get("share") || "").replace(/[^a-z0-9]/gi, "").slice(0, 32);
+  if (share) { S.shared = {slug: share, busy: true, data: null}; S.view = "shared"; return; }
   const v = p.get("v");
   S.view = (v === "list" || v === "about" || v === "privacy") ? v : "search";
 }
@@ -2207,6 +2259,32 @@ function integrityBanner(all){
   return out.join("");
 }
 
+/* The share control. Notes are a separate, unticked choice, because a note is the one
+   thing in a reading list written for nobody else. */
+function sharePanel(){
+  const sg = S.sharing;
+  if (!sg.open) return "";
+  if (sg.slug) {
+    const url = location.origin + location.pathname + "?share=" + sg.slug;
+    return `<div class="notice" role="status">${svg("i-link")}<div>
+      <b>"${esc(S.coll)}" is shared.</b> Anyone with this link can read it.
+      ${sg.withNotes ? "Your notes are included." : "Your notes are not included."}
+      It is a copy taken just now, so it will not change when your list does.
+      <div class="sharerow"><input id="share-url" readonly value="${esc(url)}"><button class="btn btn-sm" id="share-copy" type="button">Copy</button>
+      <button class="btn btn-sm btn-danger" id="share-stop" type="button">Withdraw</button></div>
+    </div></div>`;
+  }
+  return `<div class="notice">${svg("i-link")}<div>
+    <b>Share "${esc(S.coll)}" as a read-only link?</b> It makes a copy that anyone with the
+    link can read. They cannot edit it, and it will not change when your list does.
+    <label class="sharechk"><input type="checkbox" id="share-notes"${sg.withNotes ? " checked" : ""}> Include my notes</label>
+    <div class="sharerow">
+      <button class="btn btn-sm btn-primary" id="share-go" type="button"${sg.busy ? " disabled" : ""}>${sg.busy ? "Sharing" : "Create the link"}</button>
+      <button class="btn btn-sm btn-quiet" id="share-cancel" type="button">Cancel</button>
+    </div>${sg.note ? `<p class="sh-note">${esc(sg.note)}</p>` : ""}
+  </div></div>`;
+}
+
 function renderList(){
   const all = [...S.list.values()];
   /* Once per session, on opening the list. Not during a search, and not on every render. */
@@ -2232,6 +2310,7 @@ function renderList(){
       : "Kept in this browser. Export them before you switch computer."}</p>
     ${syncBanner()}
     ${integrityBanner(all)}
+    ${sharePanel()}
     <div class="filters" style="padding-bottom:16px;border-bottom:1px solid var(--line-soft);margin-top:16px">
       <label class="sr" for="f-coll">Collection</label>
       <select class="sel" id="f-coll">
@@ -2253,7 +2332,8 @@ function renderList(){
                <button class="btn btn-sm btn-quiet" id="coll-del-no" type="button">Keep</button>
                <button class="btn btn-sm btn-danger" id="coll-del-yes" type="button">Delete</button></span>`
           : `<button class="btn btn-sm btn-quiet" id="coll-rename" type="button">Rename</button>
-             <button class="btn btn-sm btn-quiet" id="coll-delete" type="button">Delete</button>`}
+             <button class="btn btn-sm btn-quiet" id="coll-delete" type="button">Delete</button>
+             ${accounts && S.account.user ? `<button class="btn btn-sm btn-quiet" id="coll-share" type="button">${svg("i-link")}Share</button>` : ""}`}
       <label class="sr" for="f-style">Reference style</label>
       <select class="sel" id="f-style">
         ${EDCITE().STYLES.map(st => `<option value="${st.k}"${S.citeStyle === st.k ? " selected" : ""}>${st.label}</option>`).join("")}
@@ -2727,10 +2807,12 @@ function renderPrivacy(){
 function render(){
   $("view-search").hidden  = S.view !== "search";
   $("view-list").hidden    = S.view !== "list";
+  $("view-shared").hidden  = S.view !== "shared";
   $("view-about").hidden   = S.view !== "about";
   $("view-privacy").hidden = S.view !== "privacy";
   if (S.view === "search")  renderSearch();
   if (S.view === "list")    renderList();
+  if (S.view === "shared")  renderShared();
   if (S.view === "about")   renderAbout();
   if (S.view === "privacy") renderPrivacy();
 
@@ -3046,7 +3128,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,#coll-share,#share-go,#share-cancel,#share-copy,#share-stop,#copy-shared,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -3063,6 +3145,39 @@ document.addEventListener("click", (ev) => {
   if (t.id === "col-pick") { S.colPicker = !S.colPicker; render(); return; }
   if (t.id === "guide-pick") { S.guideMenu = !S.guideMenu; render(); return; }
   if (t.id === "builder-toggle") { S.builder = !S.builder; render(); return; }
+  if (t.id === "coll-share") { S.sharing = {open:true, busy:false, slug:"", withNotes:false, note:""}; render(); return; }
+  if (t.id === "share-cancel") { S.sharing = {open:false, busy:false, slug:"", withNotes:false, note:""}; render(); return; }
+  if (t.id === "share-copy") {
+    const el = $("share-url");
+    if (el) { el.select(); try { navigator.clipboard.writeText(el.value); toast("Link copied."); } catch (e) { toast("Select the link and copy it."); } }
+    return;
+  }
+  if (t.id === "share-go") {
+    const A = window.EDAuth;
+    if (!A || !A.share) { S.sharing = {...S.sharing, note:"Sharing needs an account, and this site has accounts switched off."}; render(); return; }
+    S.sharing = {...S.sharing, busy:true, note:""}; render();
+    A.share(S.coll, listRows(), S.sharing.withNotes)
+      .then(slug => { S.sharing = {...S.sharing, busy:false, slug}; render(); })
+      .catch(e => { S.sharing = {...S.sharing, busy:false, note:(e && e.message) || "That did not work."}; render(); });
+    return;
+  }
+  if (t.id === "share-stop") {
+    const A = window.EDAuth, slug = S.sharing.slug;
+    S.sharing = {open:false, busy:false, slug:"", withNotes:false, note:""};
+    render();
+    if (A && A.unshare) A.unshare(slug).then(() => toast("The link no longer opens anything."))
+      .catch(() => toast("Could not withdraw it. Try again."));
+    return;
+  }
+  if (t.id === "copy-shared") {
+    const rows = (S.shared && S.shared.data && S.shared.data.papers) || [];
+    let added = 0;
+    for (const p of rows) if (!S.list.has(p.id)) { S.list.set(p.id, {...p, collections: []}); added++; }
+    persist({type:"bulk", items: rows});
+    toast(added ? `${added} paper${added === 1 ? "" : "s"} copied to your reading list.` : "Those are all saved already.");
+    render();
+    return;
+  }
   if (t.id === "cmp-open") { S.compare = {...S.compare, open:true}; render();
     setTimeout(() => { const el = $("cmp-q"); if (el) el.focus(); }, 0); return; }
   if (t.id === "cmp-close") { S.compare = {open:false, q:"", key:"", data:null, busy:false, err:false}; render(); return; }
@@ -3307,6 +3422,7 @@ document.addEventListener("input", (ev) => {
 
 document.addEventListener("change", (ev) => {
   if (ev.target.id === "f-coll")  { S.coll = ev.target.value; S.renaming = false; S.confirmColl = false; render(); return; }
+  if (ev.target.id === "share-notes") { S.sharing = {...S.sharing, withNotes: ev.target.checked}; return; }
   if (ev.target.dataset && ev.target.dataset.col) {
     const k = ev.target.dataset.col;
     S.tableCols = ev.target.checked ? [...new Set([...S.tableCols, k])] : S.tableCols.filter(x => x !== k);
@@ -3348,7 +3464,8 @@ window.addEventListener("popstate", () => {
 loadList();
 readUrl();
 render();
-if (S.q) runSearch(S.q, {keepUrl:true, keepCell: !!S.cell});
+if (S.view === "shared" && S.shared) openShared(S.shared.slug);
+else if (S.q) runSearch(S.q, {keepUrl:true, keepCell: !!S.cell});
 
 /* Accounts, when configured. The page is already rendered and usable by this point;
    signing in only ever adds to it. */

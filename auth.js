@@ -76,6 +76,14 @@ function requireSession(){
 }
 const redirectTo = () => location.origin + location.pathname;
 
+/* 22 characters of crypto-grade randomness: long enough that a shared link cannot be
+   found by guessing, which is the only thing standing between a link and the open web. */
+function randomSlug(){
+  const a = new Uint8Array(16);
+  crypto.getRandomValues(a);
+  return [...a].map(b => "abcdefghijkmnpqrstuvwxyz23456789"[b & 31]).join("").slice(0, 22);
+}
+
 window.EDAuth = {
   enabled,
   ready,
@@ -150,6 +158,54 @@ window.EDAuth = {
         .upsert(rows.slice(i, i + 100), { onConflict: "user_id,paper_id" });
       if (error) throw new Error(friendly(error));
     }
+  },
+
+  /* ── N12: shared read-only collections ──────────────────────────────────────
+     A snapshot, written when you share. See supabase-setup.sql for why it is a copy
+     rather than a live view of the reading list. */
+
+  async share(name, papers, withNotes){
+    const uid = requireSession();
+    const slug = randomSlug();
+    /* Notes are personal. They are stripped here, on the way out, rather than hidden on
+       the way in: what is not written to the table cannot leak from it. */
+    const rows = papers.map(p => {
+      const copy = { ...p };
+      if (!withNotes) delete copy.note;
+      delete copy.collections;
+      return copy;
+    });
+    const { error } = await client.from("shared_collections").insert({
+      slug, user_id: uid, name: String(name || "Collection").slice(0, 80),
+      papers: rows, with_notes: !!withNotes
+    });
+    if (error) throw new Error(friendly(error));
+    return slug;
+  },
+
+  async unshare(slug){
+    const uid = requireSession();
+    const { error } = await client.from("shared_collections")
+      .delete().eq("user_id", uid).eq("slug", slug);
+    if (error) throw new Error(friendly(error));
+  },
+
+  /* Readable signed out, which is the point. Returns null when the link is wrong or the
+     owner has withdrawn it. */
+  async openShared(slug){
+    if (!client) return null;
+    const { data, error } = await client.from("shared_collections")
+      .select("slug, name, papers, with_notes").eq("slug", slug).maybeSingle();
+    if (error || !data) return null;
+    return { slug: data.slug, name: data.name, withNotes: !!data.with_notes,
+             papers: Array.isArray(data.papers) ? data.papers : [] };
+  },
+
+  async mySharedSlugs(){
+    if (!client || !session) return [];
+    const { data, error } = await client.from("shared_collections").select("slug, name");
+    if (error) return [];
+    return data || [];
   },
 
   async remove(id){
