@@ -45,11 +45,19 @@ export function classify(r){
     || re(/\b(conducted|performed|undertook|report)\b[^.]{0,40}(systematic review|meta-analys|meta analys)/)
     || re(/\bprisma\b/);
   if (synthTitle || synthBody) {
-    if (synthTitle) why = (ttl.match(/systematic review|meta-analys\w*|network meta\w*|umbrella review/) || [""])[0];
     /* The title decides when it says anything; only a body-triggered match falls back
        to the body, or a plain systematic review is called a meta-analysis. */
     const isMeta = /meta-analys|meta analys|network meta/.test(ttl)
       || (!synthTitle && re(/\bmeta-analys/));
+    /* The phrase quoted on the card has to be the one that produced the label. Most of
+       these titles say "A Systematic Review and Meta-Analysis", and taking the first
+       match would quote the weaker half against the stronger label. */
+    if (synthTitle) {
+      const pick = isMeta ? /network meta-?analys\w*|meta-?analys\w*|meta analys\w*|umbrella review/
+                          : /systematic review|umbrella review/;
+      why = (ttl.match(pick)
+          || ttl.match(/systematic review|meta-analys\w*|network meta\w*|umbrella review/) || [""])[0];
+    }
     return {design: isMeta ? "Meta-analysis" : "Systematic review", tier:"synthesis", src:"inferred", because: why};
   }
   if (/scoping review|narrative review|literature review/.test(ttl)) {
