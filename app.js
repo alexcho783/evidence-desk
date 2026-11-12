@@ -516,7 +516,8 @@ function normalisePsy(w){
     openAccess: !!((w.open_access || {}).is_oa),
     abstract,
     design: c.design, tier: c.tier,
-    designSrc: "inferred",
+    designSrc: c.fromType ? "oatype" : "inferred",
+    designWhy: c.because || "",
     n: findN({abstractText: abstract}),
     url: doi ? "https://doi.org/" + doi : (w.id || ""),
     epmc: w.id || "",
@@ -1564,14 +1565,42 @@ function renderSheet(){
   const saved = S.list.get(S.open.id);
   const p = saved || S.open;
   const paras = (p.abstract || "").split(/\n{2,}/).filter(Boolean);
+  /* The phrase that produced an inferred label is marked in the abstract, so the claim on
+     the Design line can be checked by looking rather than taken on trust. Escaped first,
+     then the mark is inserted, so nothing from the record can become markup. */
+  const markWhy = text => {
+    const safe = esc(text);
+    if (!whyInAbstract) return safe;
+    const needle = esc(p.designWhy);
+    const at = safe.toLowerCase().indexOf(needle.toLowerCase());
+    if (at < 0) return safe;
+    return safe.slice(0, at) + `<mark class="why">` + safe.slice(at, at + needle.length)
+         + `</mark>` + safe.slice(at + needle.length);
+  };
+
+  /* Whether the phrase is actually in the abstract decides what the Design line may
+     promise. Many triggers come from the title, where there is nothing below to mark. */
+  const whyInAbstract = !!p.designWhy && p.designSrc === "inferred"
+    && (p.abstract || "").toLowerCase().includes(String(p.designWhy).toLowerCase());
+  const whyInTitle = !!p.designWhy
+    && (p.title || "").toLowerCase().includes(String(p.designWhy).toLowerCase());
 
   const kv = [];
   if (p.journal) kv.push(`<dt>Journal</dt><dd>${esc(p.journal)}${p.year ? `, <span class="num">${p.year}</span>` : ""}</dd>`);
-  const whyNote = p.designSrc === "metadata"
-    ? `from the publication type${p.designWhy ? ` <i>${esc(p.designWhy)}</i>` : ""}`
-    : p.designSrc === "registry" ? "from the registry"
-    : p.designWhy ? `inferred from the phrase <i>${esc(p.designWhy)}</i>`
+  /* A paper saved before the classifier recorded its reasoning has no designWhy at all,
+     which is different from having looked and found nothing. Say so rather than implying
+     the text was read and came back empty. */
+  const noWhy = p.designWhy === undefined
+    ? "saved before this was recorded"
     : "no design signal found in the title or abstract";
+  const whyNote = p.designSrc === "metadata"
+    ? `from the MEDLINE publication type${p.designWhy ? ` <i>${esc(p.designWhy)}</i>` : ""}`
+    : p.designSrc === "registry" ? "from the registry"
+    : p.designSrc === "oatype" ? "from OpenAlex's own record type, not from the text"
+    : p.designWhy
+      ? `inferred from the phrase <i>${esc(p.designWhy)}</i>${
+          whyInAbstract ? ", highlighted below" : whyInTitle ? ", in the title" : ""}`
+    : noWhy;
   kv.push(`<dt>Design</dt><dd>${esc(p.design)} <span style="color:var(--faint);font-size:12px">${whyNote}</span></dd>`);
   if (p.n) kv.push(`<dt>Sample</dt><dd class="mono">n = ${p.n.toLocaleString()}</dd>`);
   if (p.citations != null) kv.push(`<dt>Cited</dt><dd class="mono">${p.citations.toLocaleString()} times</dd>`);
@@ -1620,7 +1649,7 @@ function renderSheet(){
           <span id="note-state" style="font-size:12px;color:var(--faint)"></span>
         </div>` : ""}
       ${paras.length
-        ? `<div class="sh-head">Abstract</div><div class="abstract">${paras.map(x => `<p>${esc(x)}</p>`).join("")}</div>`
+        ? `<div class="sh-head">Abstract</div><div class="abstract">${paras.map(x => `<p>${markWhy(x)}</p>`).join("")}</div>`
         : `<div class="sh-head">Abstract</div><p style="color:var(--faint);font-size:13.5px">Europe PMC holds no abstract for this record.</p>`}
     </div>
     <div class="sheet-foot">

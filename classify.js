@@ -142,23 +142,32 @@ export function findN(r){
    the result inferred. */
 export function classifyPsy(title, abstract, type){
   const t = ((title || "") + " " + (abstract || "")).toLowerCase();
-  const re = x => x.test(t);
+  /* Every psychology label is inferred, since OpenAlex carries no publication types, so
+     saying which phrase produced it matters more here than anywhere else: it is the only
+     thing a reader can check the label against. */
+  let why = "";
+  const re = x => { const m = x.exec(t); if (m) why = m[0].trim(); return !!m; };
 
-  if (re(/meta-analy|systematic review|meta-analytic/))
-    return {design: re(/meta-analy/) ? "Meta-analysis" : "Systematic review", tier:"synthesis"};
+  if (re(/meta-analy\w*|systematic review|meta-analytic/)) {
+    const meta = /meta-analy/.test(why);
+    return {design: meta ? "Meta-analysis" : "Systematic review", tier:"synthesis", because: why};
+  }
   if (re(/randomi[sz]ed controlled trial|\brct\b|randomly assigned to (?:one of )?(?:two|three|the|a )|randomi[sz]ed to receive/))
-    return {design:"Randomised controlled trial", tier:"trial"};
+    return {design:"Randomised controlled trial", tier:"trial", because: why};
   if (re(/semi-structured interview|thematic analysis|grounded theory|focus group|qualitative (?:study|analysis|design)|interpretative phenomenological/))
-    return {design:"Qualitative study", tier:"qualitative"};
+    return {design:"Qualitative study", tier:"qualitative", because: why};
   if (re(/within-subjects|between-subjects|participants were (?:randomly )?(?:assigned|allocated)|experiment [123]\b|in two experiments|counterbalanced|reaction times?|stimuli were/))
-    return {design:"Experiment", tier:"experiment"};
+    return {design:"Experiment", tier:"experiment", because: why};
   if (re(/longitudinal|cohort|follow-up (?:period|assessment|at)|across (?:three|four|five|two) waves|prospectively/))
-    return {design:"Longitudinal study", tier:"cohort"};
+    return {design:"Longitudinal study", tier:"cohort", because: why};
   if (re(/cross-sectional|questionnaire|self-report measures|survey of|correlational|online panel/))
-    return {design:"Survey", tier:"survey"};
+    return {design:"Survey", tier:"survey", because: why};
   if (re(/case study|single case|case series/))
-    return {design:"Case study", tier:"case"};
-  if (type === "review" || re(/this review|we review|theoretical framework|narrative review|commentary/))
-    return {design:"Review", tier:"narrative"};
-  return {design:"Design unclear", tier:"narrative"};
+    return {design:"Case study", tier:"case", because: why};
+  if (re(/this review|we review|theoretical framework|narrative review|commentary/))
+    return {design:"Review", tier:"narrative", because: why};
+  /* OpenAlex's own type is a last resort, and it is not a phrase from the text, so it is
+     reported as what it is rather than quoted as if it were. */
+  if (type === "review") return {design:"Review", tier:"narrative", because:"", fromType:true};
+  return {design:"Design unclear", tier:"narrative", because:""};
 }

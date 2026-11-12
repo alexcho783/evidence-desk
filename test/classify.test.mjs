@@ -234,6 +234,34 @@ test("classifyPsy reads the designs psychology actually uses", () => {
     assert.equal(classifyPsy("", abstract, null).tier, tier, abstract.slice(0, 50));
 });
 
+test("classifyPsy says which phrase produced the label", () => {
+  /* OpenAlex carries no publication types, so every psychology label is inferred. The
+     phrase is the only thing a reader can check the label against, which makes it matter
+     more here than on the medicine side. */
+  const cases = [
+    ["", "Semi-structured interviews with 18 carers were analysed using thematic analysis."],
+    ["", "In two experiments, stimuli were counterbalanced across conditions."],
+    ["A meta-analysis of working memory training", "We pooled 44 studies."],
+    ["", "Children were followed across four waves of assessment."]
+  ];
+  for (const [title, abstract] of cases) {
+    const c = classifyPsy(title, abstract, null);
+    assert.notEqual(c.design, "Design unclear", abstract.slice(0, 40));
+    assert.ok(c.because, `no reason given for: ${abstract.slice(0, 40)}`);
+    assert.ok(`${title} ${abstract}`.toLowerCase().includes(c.because.toLowerCase()),
+      `reason "${c.because}" is not in the text`);
+  }
+  /* Nothing recognised must say nothing, not guess a phrase. */
+  const none = classifyPsy("", "The author reflects on forty years of practice.", null);
+  assert.equal(none.design, "Design unclear");
+  assert.equal(none.because, "");
+  /* OpenAlex's own record type is not a phrase from the text, so it is not quoted as one. */
+  const byType = classifyPsy("", "Nothing recognisable here at all.", "review");
+  assert.equal(byType.design, "Review");
+  assert.equal(byType.because, "");
+  assert.equal(byType.fromType, true);
+});
+
 test("findN pulls a sample size out, or nothing", () => {
   assert.equal(findN({abstractText: "A total of 6425 patients were enrolled."}), 6425);
   assert.equal(findN({abstractText: "We randomised participants (n = 1,200) to two arms."}), 1200);
