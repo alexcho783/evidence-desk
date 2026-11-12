@@ -203,12 +203,22 @@ grant execute on function public.delete_my_account() to authenticated;
 -- collection on the site.
 -- select policyname, cmd, qual from pg_policies where tablename = 'shared_collections';
 --
--- Check, while signed OUT, that a shared collection cannot be listed. Should return 0 rows
--- or a permission error, never somebody's collection:
--- select count(*) from public.shared_collections;
+-- Check that a shared collection cannot be listed. Same caveat: use the anon role, not a
+-- plain select. This one should raise a permission error, since anon is revoked outright.
 --
--- Check, while signed OUT, that the private table is still private. Should return 0 rows:
--- select count(*) from public.reading_list;
+-- begin;
+--   set local role anon;
+--   select count(*) from public.shared_collections;   -- must refuse
+-- rollback;
+--
+-- Check that the private table really is private. NOT with a plain select in the SQL
+-- editor: that connects as postgres, which has bypassrls and returns every row whatever
+-- the policies say. Drop to the anon role for one transaction instead:
+--
+-- begin;
+--   set local role anon;
+--   select count(*) from public.reading_list;   -- must be 0
+-- rollback;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- N11: saved search alerts

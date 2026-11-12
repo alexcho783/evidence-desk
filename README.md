@@ -289,23 +289,43 @@ in this repository has been applied to a live Supabase project.
 **Shared collections (N12)** need only the new table. Re-run `supabase-setup.sql` in the
 SQL editor: it is written to be safe to run more than once, and it adds
 `shared_collections`, its policies, and a `delete_my_account()` that also clears shared
-rows. Then check, while **signed out**, that the private table is still private:
+rows.
+
+Then check that the private tables really are private. **Do not test this with a plain
+`select` in the SQL editor.** That editor connects as `postgres`, which carries the
+`bypassrls` attribute, so it returns every row no matter what the policies say. A count of
+your own papers there proves nothing either way.
+
+Test the path a visitor's browser actually takes, which is PostgREST holding the anon key.
+Substitute your own project URL and anon key from `config.js`, both of which are public by
+design:
+
+```bash
+curl -s "https://YOUR_PROJECT_REF.supabase.co/rest/v1/reading_list?select=id&limit=5" -H "apikey: YOUR_ANON_KEY"
+```
+
+That must print `[]`. If it prints rows, stop: the reading list is world-readable.
+
+```bash
+curl -s "https://YOUR_PROJECT_REF.supabase.co/rest/v1/shared_collections?select=slug&limit=5" -H "apikey: YOUR_ANON_KEY"
+```
+
+That must print a permission error, because `anon` is revoked from the table outright. A
+shared collection is readable only through `get_shared_collection(slug)`, one row at a
+time: a policy permissive enough to read someone's collection by slug would also let
+anyone holding the anon key list every shared collection on the site.
+
+The same check inside the SQL editor, if you prefer, by dropping to the anon role for one
+transaction:
 
 ```sql
+begin;
+set local role anon;
 select count(*) from public.reading_list;
+rollback;
 ```
 
-That must return 0 rows, not an error and not your papers. Then, still signed out:
-
-```sql
-select count(*) from public.shared_collections;
-```
-
-That must also return 0 or refuse. A shared collection is readable only through
-`get_shared_collection(slug)`, one row at a time, because a policy permissive enough to
-read someone's collection by slug would also let anyone holding the anon key list every
-shared collection on the site. If either query returns rows, stop and fix the policies
-before sharing anything.
+That must return 0.
 
 **Weekly alerts (N11)** need the table, a function, four secrets and a schedule. The table
 comes from the same `supabase-setup.sql` run.
