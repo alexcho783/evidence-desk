@@ -98,6 +98,26 @@ const TRIAL_COLS = [
 ];
 const cols = () => (S.source === "trials" ? TRIAL_COLS : ERA_COLS);
 
+/* B1: the grid used to be drawn only from the papers on screen, which are the first page
+   by relevance, and Europe PMC's relevance ordering strongly favours recent work. For
+   "SGLT2 inhibitors heart failure mortality" that made the 2011-2021 column look empty
+   when Europe PMC in fact holds 163 indexed syntheses and 249 indexed trials in it.
+   So each cell also asks Europe PMC how many indexed records it holds, which is a
+   pageSize=1 search read for its hitCount alone.
+   Only rows that correspond to an indexed publication type can be counted. Preclinical
+   work has no such type, so that row is left without a number rather than guessed at, and
+   the counts are never added to the dots: one is what the indexers have, the other is what
+   this page has read. */
+const TIER_TYPE = {
+  synthesis: '(PUB_TYPE:"Meta-Analysis" OR PUB_TYPE:"Systematic Review")',
+  guideline: '(PUB_TYPE:"Practice Guideline" OR PUB_TYPE:"Consensus Development Conference")',
+  trial:     '(PUB_TYPE:"Randomized Controlled Trial" OR PUB_TYPE:"Clinical Trial")',
+  cohort:    'PUB_TYPE:"Observational Study"',
+  case:      'PUB_TYPE:"Case Reports"',
+  narrative: 'PUB_TYPE:"Review"'
+};
+const COUNT_CONCURRENCY = 6;   /* Europe PMC asks for no more than about 10 requests a second */
+
 const DESIGN_FILTERS = [
   {k:"any",    label:"Any design",            q:""},
   {k:"synth",  label:"Syntheses & guidelines", q:'(PUB_TYPE:"Meta-Analysis" OR PUB_TYPE:"Systematic Review" OR PUB_TYPE:"Practice Guideline")'},
@@ -140,6 +160,9 @@ const S = {
   busy:false, loadingMore:false,
   results:[], hitCount:0, cursor:"*", exhausted:false,
   err:null,
+  /* Indexed counts for the grid, fetched after the results land so they never hold up the
+     page. `key` records which search they belong to, so a stale set is never drawn. */
+  indexed:{key:"", data:null, busy:false, err:false},
   list:new Map(), recent:[],
   filter:"",
   open:null, confirmDel:false, confirmClear:false,
@@ -737,6 +760,55 @@ async function fetchPage(cursor, signal){
   };
 }
 
+/* The counts describe the literature behind the query, so they carry the query itself and
+   the open-access filter, but not the design filter or the year range: those two are the
+   axes of the grid, and applying them would empty the very cells the grid exists to show. */
+function indexedKey(){
+  return S.source === "med" && !identifierQuery(S.q)
+    ? JSON.stringify([S.q.trim(), S.openOnly]) : "";
+}
+
+async function loadIndexed(signal){
+  const key = indexedKey();
+  if (!key || S.indexed.key === key) return;
+  const jobs = [];
+  for (const t of Object.keys(TIER_TYPE))
+    for (const c of ERA_COLS) jobs.push({t, c});
+
+  S.indexed = {key, data:null, busy:true, err:false};
+  render();
+
+  const data = {};
+  let next = 0, failed = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const {t, c} = jobs[next++];
+      const query = `(${S.q.trim()}) AND ${TIER_TYPE[t]} AND (PUB_YEAR:[${c.qFrom} TO ${c.qTo}])`
+        + (S.openOnly ? ' AND (OPEN_ACCESS:y)' : "");
+      const p = new URLSearchParams({query, format:"json", pageSize:"1", resultType:"idlist"});
+      try {
+        const r = await fetch(API + "?" + p.toString(), {headers:{Accept:"application/json"}, signal});
+        if (!r.ok) { failed++; continue; }
+        const d = await r.json();
+        data[t + "/" + c.k] = d.hitCount || 0;
+      } catch (e) {
+        if (aborted(e)) throw e;
+        failed++;
+      }
+    }
+  };
+  try {
+    await Promise.all(Array.from({length: COUNT_CONCURRENCY}, worker));
+  } catch (e) {
+    if (aborted(e)) return;             /* a newer search owns the grid now */
+  }
+  if (S.indexed.key !== key) return;    /* likewise, without an abort having fired */
+  /* A partial set would make some cells look emptier than they are, so anything short of
+     the full grid is reported as unavailable rather than drawn. */
+  S.indexed = {key, data: failed ? null : data, busy:false, err: failed > 0};
+  render();
+}
+
 /* ══ Search flow ═══════════════════════════════════════════ */
 
 /* Only the newest search may write to the state. `seq` numbers every search; a reply
@@ -762,6 +834,7 @@ async function runSearch(q, opts){
   S.q = q; S.lastQ = q;
   S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = false;
+  S.indexed = {key:"", data:null, busy:false, err:false};
   go("search", {silent:true});
   render();
 
@@ -782,6 +855,10 @@ async function runSearch(q, opts){
   S.busy = false;
   if (!keepUrl) pushUrl();
   render();
+
+  /* After the page is on screen, not before: the grid draws from the listed papers first
+     and the counts fill in when they arrive. */
+  if (!S.err && S.results.length) loadIndexed(ctrl.signal).catch(() => {});
 }
 
 /* OpenAlex computes related works for everything it indexes, so a Europe PMC paper is
@@ -792,6 +869,7 @@ async function similarTo(paper){
   const ctrl = (inflight = new AbortController());
   const mine = ++seq;
   S.open = null; S.confirmDel = false;
+  S.indexed = {key:"", data:null, busy:false, err:false};
   S.busy = true; S.loadingMore = false; S.err = null; S.results = []; S.hitCount = 0;
   S.cursor = "*"; S.exhausted = true;
   S.chainLabel = `papers similar to ${label}`;
@@ -959,30 +1037,52 @@ function plot(rows){
     .sort((a, b) => TIER[a].rank - TIER[b].rank)
     .map(k => ({k, ...TIER[k]}));
   const full = ladder.concat(extra);
-  const used = full.filter(t => placed.some(x => x.tier === t.k));
+  /* A row earns its place if the listed papers put something in it OR Europe PMC has
+     indexed records into it. Without the second half the row that matters most is the one
+     that disappears: for the SGLT2 query no trial reaches the first page, so the trial row
+     was omitted while Europe PMC held 249 indexed trials in the middle column. */
+  const hasCount = t => !!S.indexed.data && TIER_TYPE[t.k]
+    && ERA_COLS.some(c => (S.indexed.data[t.k + "/" + c.k] || 0) > 0);
+  const used = full.filter(t => placed.some(x => x.tier === t.k) || hasCount(t));
   const rows_t = used.length ? used : ladder.slice(0, 3);
 
   const counts = columns.map(c => placed.filter(p => c.test(p)).length);
-  const colTracks = counts.map(c => c ? "minmax(0,1fr)" : "minmax(0,0.42fr)").join(" ");
+  /* A column is only empty when neither layer has anything in it. Once the indexed totals
+     arrive a column can hold 163 records while no listed paper falls in it, and calling
+     that "none" would contradict the number printed directly underneath. */
+  const colHas = columns.map((c, i) => counts[i] > 0
+    || (!!S.indexed.data && Object.keys(TIER_TYPE).some(t => (S.indexed.data[t + "/" + c.k] || 0) > 0)));
+  const colTracks = colHas.map(h => h ? "minmax(0,1fr)" : "minmax(0,0.42fr)").join(" ");
 
   let g = `<div class="p-corner"></div>`;
   columns.forEach((e, i) => {
-    g += `<div class="p-colhead" data-empty="${counts[i] ? 0 : 1}">
-            <b>${esc(e.label)}</b><span>${counts[i] ? esc(e.sub) : "none"}</span></div>`;
+    g += `<div class="p-colhead" data-empty="${colHas[i] ? 0 : 1}">
+            <b>${esc(e.label)}</b><span>${colHas[i] ? esc(e.sub) : "none"}</span></div>`;
   });
 
+  /* Two layers, kept apart on purpose. The number is how many records Europe PMC has
+     indexed into that cell; the dots are the papers listed below, which is a page of
+     results. Adding them together would be inventing a figure neither source gives. */
+  const idx = S.indexed.data;
+  const num = n => n >= 10000 ? Math.round(n / 1000) + "k" : n.toLocaleString();
   for (const t of rows_t) {
     g += `<div class="p-rowhead ${t.w === "strong" ? "p-row-strong" : "p-row-weak"}">
             <b>${t.label}</b><span>${t.note}</span></div>`;
     for (const e of columns) {
       const cell = placed.filter(p => p.tier === t.k && e.test(p));
-      g += `<div class="p-cell">` + (cell.length
-        ? cell.map(p => {
+      const n = idx && TIER_TYPE[t.k] ? idx[t.k + "/" + e.k] : null;
+      const countLayer = n == null ? "" : n === 0
+        ? `<span class="p-count" data-zero="1">0</span>`
+        : `<button class="p-count" data-w="${t.w}" data-cell="${esc(t.k + "/" + e.k)}"
+             title="${esc(`${num(n)} indexed ${(t.noun || ["record","records"])[n === 1 ? 0 : 1]} in ${e.label}. Select to search just these.`)}"
+             >${num(n)}<i>indexed</i></button>`;
+      g += `<div class="p-cell"${n ? ' data-has-count="1"' : ""}>` + countLayer + (cell.length
+        ? `<span class="p-dots">` + cell.map(p => {
             const lab = `${p.title.slice(0,70)} — ${p.design}${p.year ? `, ${p.year}` : ""}${p.n ? `, n = ${p.n}` : ""}${p.trialStatus ? `, ${p.trialStatus.toLowerCase()}` : ""}`;
             return `<button class="p-dot" data-w="${t.w}" data-saved="${S.list.has(p.id) ? 1 : 0}"
               data-jump="${esc(p.id)}" title="${esc(lab)}" aria-label="${esc(lab)}"><i></i></button>`;
-          }).join("")
-        : `<span class="p-empty">—</span>`) + `</div>`;
+          }).join("") + `</span>`
+        : (n == null ? `<span class="p-empty">—</span>` : "")) + `</div>`;
     }
   }
 
@@ -1023,7 +1123,14 @@ function plot(rows){
       <span class="lg" data-w="weak"><i></i>Weak or indirect</span>
       <span class="lg" data-w="saved"><i></i>Saved</span>
       <span style="color:var(--faint)">Top rows carry most weight; right-hand column is most recent. Select a mark to jump to the paper.</span>
-      <span style="flex-basis:100%;color:var(--faint)">This grid shows only the ${S.results.length} papers listed below, which are the first results by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}. That ordering favours recent work, so the grid is not a picture of the whole literature.</span>
+      ${idx ? `<span class="lg" data-w="count"><i></i>Indexed total</span>` : ""}
+      <span style="flex-basis:100%;color:var(--faint)">${idx
+        ? `The numbers are how many records Europe PMC has indexed into each cell for this question, across the whole database. The marks are the ${S.results.length} papers listed below, which are only the first page by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}. The two are counted separately and never added together. Rows with no number have no publication type to count.`
+        : S.indexed.busy
+        ? `Counting how many indexed records Europe PMC holds in each cell. The marks below are the ${S.results.length} papers listed, which are the first page by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}.`
+        : S.indexed.err
+        ? `Europe PMC did not return the indexed totals, so this grid shows only the ${S.results.length} papers listed below, which are the first results by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}. That ordering favours recent work, so the grid is not a picture of the whole literature.`
+        : `This grid shows only the ${S.results.length} papers listed below, which are the first results by ${esc((SORTS.find(o => o.k === S.sort) || SORTS[0]).label.toLowerCase())}. That ordering favours recent work, so the grid is not a picture of the whole literature.`}</span>
     </div>
     </div>
   </section>`;
@@ -1631,10 +1738,16 @@ function plotSvg(rows){
   const extra = [...new Set(placed.map(x => x.tier))]
     .filter(k => TIER[k] && !ladder.some(t => t.k === k))
     .sort((a, b) => TIER[a].rank - TIER[b].rank).map(k => ({k, ...TIER[k]}));
-  const rowsT = ladder.concat(extra).filter(t => placed.some(x => x.tier === t.k));
+  /* The same two layers as the grid on screen, or the exported image would quietly say
+     something different from the page it was exported from. */
+  const idx = S.indexed.data;
+  const hasCount = t => !!idx && TIER_TYPE[t.k] && columns.some(c => (idx[t.k + "/" + c.k] || 0) > 0);
+  const rowsT = ladder.concat(extra).filter(t => placed.some(x => x.tier === t.k) || hasCount(t));
   if (!rowsT.length) return null;
+  const num = n => n >= 10000 ? Math.round(n / 1000) + "k" : n.toLocaleString();
 
-  const LAB = 160, COLW = 190, RH = 56, TOP = 86, PAD = 24;
+  const LAB = 160, COLW = 190, TOP = 86, PAD = 24;
+  const RH = S.indexed.data ? 70 : 56;
   const W = LAB + COLW * columns.length + PAD * 2;
   const H = TOP + RH * rowsT.length + 64;
   const FILL = {strong:"#0F6B52", mid:"#8A5A00", weak:"#D9C9A8"};
@@ -1659,20 +1772,31 @@ function plotSvg(rows){
     columns.forEach((c, ci) => {
       const cell = placed.filter(x => x.tier === t.k && c.test(x));
       const x0 = PAD + LAB + COLW * ci + 14;
+      const mid = x0 + COLW / 2 - 14;
+      const n = idx && TIER_TYPE[t.k] ? idx[t.k + "/" + c.k] : null;
+      /* The indexed total sits above the marks, as on the page, and never absorbs them. */
+      if (n != null) {
+        o += `<text x="${mid}" y="${y + 20}" font-size="13" font-weight="600" text-anchor="middle" ` +
+             `fill="${n ? (FILL[t.w] || "#5A6472") : "#D7DDE6"}">${num(n)}</text>`;
+        if (n) o += `<text x="${mid}" y="${y + 30}" font-size="7" letter-spacing="0.7" text-anchor="middle" fill="#8A94A3">INDEXED</text>`;
+      }
       if (!cell.length) {
-        o += `<text x="${x0 + COLW / 2 - 14}" y="${y + RH / 2 + 4}" font-size="11" fill="#D7DDE6" text-anchor="middle">—</text>`;
+        if (n == null) o += `<text x="${mid}" y="${y + RH / 2 + 4}" font-size="11" fill="#D7DDE6" text-anchor="middle">—</text>`;
         return;
       }
+      const baseY = n != null ? y + RH - 14 : y + RH / 2;
       cell.slice(0, 18).forEach((pp, i) => {
         const cx = x0 + (i % 9) * 19 + 6;
-        const cy = y + RH / 2 + (cell.length > 9 ? (i < 9 ? -9 : 9) : 0);
-        o += `<circle cx="${cx}" cy="${cy}" r="6" fill="${FILL[t.w] || FILL.weak}"/>`;
+        const cy = baseY + (cell.length > 9 && n == null ? (i < 9 ? -9 : 9) : 0);
+        o += `<circle cx="${cx}" cy="${cy}" r="${n != null ? 4.5 : 6}" fill="${FILL[t.w] || FILL.weak}"/>`;
       });
     });
   });
 
   o += `<line x1="${PAD + LAB - 10}" y1="${TOP - 1}" x2="${PAD + LAB - 10}" y2="${TOP + RH * rowsT.length}" stroke="#E6EBF1"/>`;
-  o += `<text x="${PAD}" y="${H - 22}" font-size="10.5" fill="#8A94A3">${placed.length} of ${rows.length} records placed · higher rows carry more weight · Evidence Desk</text>`;
+  o += `<text x="${PAD}" y="${H - 22}" font-size="10.5" fill="#8A94A3">${idx
+    ? `numbers = records indexed by Europe PMC · marks = the ${rows.length} listed papers, counted separately`
+    : `${placed.length} of ${rows.length} records placed`} · higher rows carry more weight · Evidence Desk</text>`;
   o += `</svg>`;
   return o;
 }
