@@ -121,6 +121,9 @@
 <div id="toast-root"></div>
 
 <script src="config.js"></script>
+<!-- Before app.js on purpose: this captures and strips the utm parameters, so the app's own
+     URL reading never sees them. It sends nothing unless config.js names a provider. -->
+<script src="analytics.js"></script>
 <script src="auth.js"></script>
 <script src="cite.js"></script>
 <!-- A module, so it can import the classifier from classify.js. Modules are deferred and

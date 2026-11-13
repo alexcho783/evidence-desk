@@ -64,6 +64,13 @@ const SOURCES = {
 };
 
 const src = () => SOURCES[S.source] || SOURCES.med;
+
+/* Analytics, when config.js switches it on. Fixed names and nothing else: no query, no
+   filters, no paper identifiers. analytics.js ignores a name it does not recognise. */
+const SRC_EVENT = {med:"search-medicine", psy:"search-psychology", trials:"search-trials"};
+function track(name){
+  try { if (window.EDAnalytics) window.EDAnalytics.event(name); } catch (e) {}
+}
 /* The active ladder, as a list of {k, label, note, w}. */
 function tiers(){
   const s = src();
@@ -1600,6 +1607,8 @@ async function runSearch(q, opts){
   }
   go("search", {silent:true});
   render();
+  /* The tab searched, and nothing else. The question itself stays in this browser. */
+  track(SRC_EVENT[S.source]);
 
   try {
     const r = await fetchPage("*", ctrl.signal);
@@ -3054,6 +3063,7 @@ async function exportTable(){
     const name = S.coll === "all" ? "Evidence table" : S.coll;
     downloadBlob(slug(name) + "-table.docx", await cite.toTableDocxBlob(name, rows, S.tableCols));
     toast(`Evidence table exported with ${rows.length} stud${rows.length === 1 ? "y" : "ies"}.`);
+    track("export-table");
   } catch (e) {
     toast("Couldn't build the table — the export library didn't load.");
   }
@@ -3072,6 +3082,7 @@ async function exportDocx(){
     const blob = await cite.toDocxBlob(name, rows, S.citeStyle);
     downloadBlob(slug(name) + ".docx", blob);
     toast(`${rows.length} reference${rows.length === 1 ? "" : "s"} exported.`);
+    track("export-docx");
   } catch (e) {
     toast("Couldn't build the Word file — the export library didn't load.");
   }
@@ -3236,6 +3247,7 @@ document.addEventListener("click", (ev) => {
       const item = {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ};
       S.list.set(p.id, item);
       persist({type:"upsert", item}); render(); toast("Saved to reading list.");
+      track("save-paper");
     }
     return;
   }
@@ -3257,6 +3269,7 @@ document.addEventListener("click", (ev) => {
       if (kind === "bib") download("conspectus.bib", bibtex(rows), "application/x-bibtex");
       else download("conspectus.ris", ris(rows), "application/x-research-info-systems");
       toast(`${rows.length} record${rows.length === 1 ? "" : "s"} exported.`);
+      track("export-" + (kind === "bib" ? "bib" : "ris"));
     });
     return;
   }
@@ -3269,7 +3282,7 @@ document.addEventListener("click", (ev) => {
         const item = {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ};
         S.list.set(p.id, item); added.push(item);
       }
-      if (added.length) { persist({type:"bulk", items:added}); render(); }
+      if (added.length) { persist({type:"bulk", items:added}); render(); track("save-paper"); }
       toast(added.length ? `${added.length} paper${added.length === 1 ? "" : "s"} saved.` : "Those are all saved already.");
       break;
     }
@@ -3279,6 +3292,7 @@ document.addEventListener("click", (ev) => {
       const item = {...p, note:"", savedAt:new Date().toISOString(), fromQuery:S.lastQ};
       S.list.set(p.id, item);
       persist({type:"upsert", item}); render(); toast("Saved to reading list.");
+      track("save-paper");
       break;
     }
     case "del-ask": S.confirmDel = true; renderSheet(); break;

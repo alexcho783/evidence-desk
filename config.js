@@ -15,6 +15,21 @@
  *
  * Setup is in README.md under "Optional: accounts".
  */
+/* Visitor counting. Off until you name a provider: blank, and analytics.js loads no script
+ * and sends no request at all.
+ *
+ *   provider  "goatcounter", the only one implemented. Leave blank to count nothing.
+ *   site      your GoatCounter subdomain, so "conspectus" for conspectus.goatcounter.com.
+ *   allowLocal  normally false. GoatCounter refuses to count localhost unless this is on,
+ *               so switch it on only while testing from python3 -m http.server, and off
+ *               again before committing, or your own development visits land in the stats.
+ *
+ * What is sent is decided in analytics.js, not here: the page path without its query
+ * string, a search count per tab, saves, exports, and the campaign a visit arrived on.
+ * Never the search text.
+ */
+const ANALYTICS = { provider: "", site: "", allowLocal: false };
+
 window.ED_CONFIG = {
   // From your Supabase project: Settings → API → Project URL
   supabaseUrl: "https://mrsfkaeklaaduzxpnxdh.supabase.co",
