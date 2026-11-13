@@ -1,23 +1,24 @@
 # Conspectus — public edition
 
-Formerly Evidence Desk. The repository and the published site moved with the name, so the
-address is now `https://alexcho783.github.io/Conspectus/`. **The old Pages URL is dead and
-will not redirect**: GitHub redirects a renamed repository's issues, stars and git
-operations, but project site URLs are the documented exception, so anything still pointing
-at `/evidence-desk/` gets a 404.
+Formerly Evidence Desk. It lives at **https://conspectusapp.github.io/**, published from
+the `conspectusapp` organisation out of a repository named `conspectusapp.github.io`. That
+name is what makes it an owner site rather than a project site, which is why the address
+has no path on the end and no capital letter to get wrong.
 
-**The capital C in the path is load-bearing.** The repository is named `Conspectus`, and
-GitHub Pages paths are case-sensitive, so `/conspectus/` is a 404 while `/Conspectus/`
-serves the site. Anything that has to match the address exactly, the Supabase redirect
-allow-list above all, has to match the capital too.
+**Two earlier addresses are dead and neither redirects.** GitHub redirects a renamed or
+transferred repository's issues, stars and git operations, but project site URLs are the
+documented exception, so `/evidence-desk/` and `/Conspectus/` both return 404. Anything
+that has to match the address exactly, the Supabase redirect allow-list and the link
+preview tags in `index.html` above all, has to be changed with it.
 
-Two things deliberately did not move. The browser storage keys are still `ed-*`, because
-renaming them would orphan every reading list, note and collection that anyone has saved,
-on every device, in exchange for tidiness nobody can see. And the local working folder is
-still `evidence-desk-web`, which is cosmetic and costs nothing to leave.
+Never create a repository called `Conspectus` or `evidence-desk` under the original
+personal account: GitHub's docs say reusing a transferred repository's old name
+permanently deletes the redirects that still work.
 
-Never create a new repository called `evidence-desk` under this account. GitHub warns that
-reusing a renamed repository's old name silently breaks the redirects for everything else.
+The browser storage keys are still `ed-*`, deliberately. Renaming them would orphan every
+reading list, note and collection anyone has saved, on every device, in exchange for
+tidiness nobody can see. The local working folder is still `evidence-desk-web`, which is
+cosmetic.
 
 A medical literature search that sorts what it finds by **what kind of study each paper is**,
 rather than only by relevance. Every result is placed on a grid: study-design strength down the
