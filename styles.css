@@ -113,6 +113,17 @@ h1,h2,h3{text-wrap:balance; margin:0}
 .banner svg{flex:0 0 16px; width:16px; height:16px; color:var(--mid)}
 .banner .spin{flex:0 0 15px; width:15px; height:15px}
 .banner b{color:var(--ink); font-weight:600}
+/* One line for someone who arrived from a post. The close button is a full 44px square so
+   it can be hit with a thumb; the text takes the vertical padding instead, which keeps the
+   row the same height as the button. */
+.welcome{display:flex; align-items:center; gap:6px; margin-top:16px;
+  padding:0 4px 0 14px; border-radius:var(--r-m);
+  background:var(--accent-soft); color:var(--accent-ink); font-size:13.5px}
+.welcome .grow{flex:1; min-width:0; padding:13px 0; line-height:1.45}
+.welcome button{flex:0 0 44px; width:44px; height:44px; display:grid; place-items:center;
+  border:0; background:none; color:inherit; border-radius:var(--r-s); cursor:pointer}
+.welcome button:hover{background:color-mix(in srgb, var(--accent-ink) 12%, transparent)}
+.welcome button svg{width:15px; height:15px}
 .sync-dot{width:7px; height:7px; border-radius:50%; background:var(--strong); flex:0 0 7px}
 .brand-mark{width:26px; height:26px; flex:0 0 26px; color:var(--accent)}
 .brand-name{font-size:15px; font-weight:600; letter-spacing:-.015em}

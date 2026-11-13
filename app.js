@@ -264,7 +264,12 @@ const EXAMPLES = [
 
 const LS = {list:"ed-reading-list", recent:"ed-recent", theme:"ed-theme", colls:"ed-collections",
             counts:"ed-counts", integrity:"ed-integrity", tablecols:"ed-table-cols",
-            plotview:"ed-plot-view", sidebar:"ed-sidebar"};
+            plotview:"ed-plot-view", sidebar:"ed-sidebar", welcome:"ed-welcome-seen"};
+
+/* Arriving from a post drops you into the middle of somebody else's search. One line to
+   say so, dismissed for the browsing session, and never shown to anyone who came any
+   other way. */
+const SOCIAL_SOURCES = ["instagram", "linkedin"];
 
 /* ══ State ═══════════════════════════════════════════ */
 
@@ -298,6 +303,7 @@ const S = {
   list:new Map(), recent:[],
   filter:"",
   open:null, confirmDel:false, confirmClear:false,
+  welcomeGone:false,   /* the banner shown to someone arriving from a post */
   /* Accounts are optional; everything below stays inert when config.js is blank. */
   account:{user:null, busy:false, note:"", synced:false, sent:"", confirmWipe:false},
   signIn:false
@@ -418,6 +424,15 @@ function loadList(){
   if (store(LS.plotview) === "time") S.plotView = "time";
   const savedCols = store(LS.tablecols);
   if (Array.isArray(savedCols) && savedCols.length) S.tableCols = savedCols;
+  S.welcomeGone = sessionStore(LS.welcome) === true;
+}
+
+/* True only for a visit that arrived from one of the social posts and has not closed the
+   banner yet. analytics.js has already read and lower-cased the campaign. */
+function showWelcome(){
+  if (S.welcomeGone) return false;
+  const c = (window.EDAnalytics && window.EDAnalytics.campaign) || {};
+  return SOCIAL_SOURCES.indexOf(c.source || "") !== -1;
 }
 function saveList(){ store(LS.list, [...S.list.values()]); }
 
@@ -2229,7 +2244,12 @@ function renderSearch(){
       <p>Europe PMC found no records. Try fewer words, drop the filters, or name the population, the intervention and the outcome separately.</p></div>`;
   }
 
-  $("view-search").innerHTML = hero + hint + working + err + examples + results;
+  const welcome = showWelcome() ? `<div class="welcome" role="status">
+    <span class="grow">Welcome. This is the search from the post. Try your own question above.</span>
+    <button id="welcome-x" type="button" aria-label="Dismiss">${svg("i-x")}</button>
+  </div>` : "";
+
+  $("view-search").innerHTML = hero + welcome + hint + working + err + examples + results;
 }
 
 /* ══ Reading list view ═══════════════════════════════════════════ */
@@ -3148,7 +3168,7 @@ function ris(rows){
 /* ══ Events ═══════════════════════════════════════════ */
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
+  const t = ev.target.closest("[data-author],[data-similar],[data-cited],[data-cites],[data-uncoll],[data-plot-toggle],[data-src],[data-go],[data-ex],[data-open],[data-save],[data-jump],[data-cell],[data-redo],[data-export],#more,#save-all,#sheet-x,#bd,#sheet-save,#del-ask,#del-no,#del-yes,#note-save,#clear-ask,#clear-no,#clear-yes,#q-list-clear,#home-side,#home-top,#new-search,#clear-recent,#welcome-x,#sign-in-open,#sign-out,#signin-x,#bd-signin,#google-in,#signin-again,#wipe-ask,#wipe-no,#wipe-yes,#export-docx,#export-table,[data-design],[data-view2],[data-syn],#builder-toggle,#cmp-open,#cmp-close,#plot-png,#col-pick,#guide-pick,#coll-rename,#coll-delete,#coll-del-no,#coll-del-yes,#rename-cancel");
   if (!t) return;
 
   if (t.id === "home-side" || t.id === "home-top" || t.id === "new-search") { S.cell = null; home(); return; }
@@ -3275,6 +3295,11 @@ document.addEventListener("click", (ev) => {
   }
 
   switch (t.id) {
+    case "welcome-x":
+      S.welcomeGone = true;
+      sessionStore(LS.welcome, true);
+      render();
+      break;
     case "more": loadMore(); break;
     case "save-all": {
       const added = [];
