@@ -30,6 +30,17 @@
  */
 const ANALYTICS = { provider: "", site: "", allowLocal: false };
 
+/* The weekly email. Off until you paste in a form endpoint: blank, and the sign up block
+ * is not rendered at all, in either place it would appear.
+ *
+ *   action    the form action URL your email provider gives you for an embedded form.
+ *   provider  the provider's name, shown to people so they know who receives the address.
+ *
+ * The site itself stores nothing. The address goes straight from the visitor's browser to
+ * the provider, and never touches this page's storage.
+ */
+const NEWSLETTER = { action: "", provider: "" };
+
 window.ED_CONFIG = {
   // From your Supabase project: Settings → API → Project URL
   supabaseUrl: "https://mrsfkaeklaaduzxpnxdh.supabase.co",

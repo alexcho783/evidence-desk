@@ -304,6 +304,7 @@ const S = {
   filter:"",
   open:null, confirmDel:false, confirmClear:false,
   welcomeGone:false,   /* the banner shown to someone arriving from a post */
+  news:{busy:false, done:false, err:""},   /* the weekly email sign up */
   /* Accounts are optional; everything below stays inert when config.js is blank. */
   account:{user:null, busy:false, note:"", synced:false, sent:"", confirmWipe:false},
   signIn:false
@@ -425,6 +426,60 @@ function loadList(){
   const savedCols = store(LS.tablecols);
   if (Array.isArray(savedCols) && savedCols.length) S.tableCols = savedCols;
   S.welcomeGone = sessionStore(LS.welcome) === true;
+}
+
+/* ══ The weekly email ═══════════════════════════════════════════
+   Nothing here stores an address. The form posts straight to the provider named in
+   config.js, and with no action set the block is not rendered at all. */
+
+const NEWS = () => (typeof NEWSLETTER === "object" && NEWSLETTER) || {action:"", provider:""};
+
+function signupBlock(where){
+  const n = NEWS();
+  if (!n.action) return "";
+  const prov = n.provider || "our email provider";
+  const st = S.news;
+  const id = "nl-" + where;
+  const msg = st.err
+    ? `<p class="nl-note" data-bad="1">${esc(st.err)}</p>`
+    : st.done
+      ? `<p class="nl-note">Almost there. Check your email for the confirmation link.</p>`
+      : "";
+  return `<section class="signup" data-where="${esc(where)}">
+    <h2 class="nl-h">One question, one grid, every week</h2>
+    <form class="nl-form" data-newsletter="${esc(where)}">
+      <label class="nl-label" for="${id}">Email address</label>
+      <div class="nl-row">
+        <input class="nl-in" id="${id}" name="email" type="email" required autocomplete="email"
+          inputmode="email" placeholder="you@example.com" ${st.busy ? "disabled" : ""}>
+        <button class="btn btn-primary" type="submit" ${st.busy ? "disabled" : ""}>${st.busy ? "Sending…" : "Subscribe"}</button>
+      </div>
+      <div aria-live="polite">${msg}</div>
+      <p class="nl-fine">Sent by ${esc(prov)}. Unsubscribe any time. See
+        <button class="linkish" type="button" data-go="privacy">Privacy</button>.</p>
+    </form>
+  </section>`;
+}
+
+/* The provider's answer is on another origin and cannot be read from here, so a reply that
+   arrives at all is reported as sent and the person is told to look for the confirmation
+   email. Only a request that never got through is reported as an error. The address is
+   posted under both of the field names the common providers use. */
+async function subscribe(email){
+  const n = NEWS();
+  if (!n.action || S.news.busy) return;
+  S.news = {busy:true, done:false, err:""};
+  render();
+  try {
+    const body = new FormData();
+    body.append("email", email);
+    body.append("EMAIL", email);
+    await fetch(n.action, {method:"POST", mode:"no-cors", body});
+    S.news = {busy:false, done:true, err:""};
+  } catch (e) {
+    S.news = {busy:false, done:false, err:"That didn't get through. Check your connection and try again."};
+  }
+  render();
 }
 
 /* True only for a visit that arrived from one of the social posts and has not closed the
@@ -2169,7 +2224,7 @@ function renderSearch(){
     <div class="ex-head">Try one of these</div>
     <div class="ex-grid">${EXAMPLES.map(e =>
       `<button class="ex" data-ex="${esc(e.q)}"><span class="ex-tag">${esc(e.tag)}</span><span>${esc(e.q)}</span></button>`
-    ).join("")}</div></div>` : "";
+    ).join("")}</div></div>` + signupBlock("home") : "";
 
   /* Pinned above the grid, because a reader who wants one answer wants this one. Shown
      with its year and its age, since a synthesis is only as current as its search date,
@@ -2700,7 +2755,7 @@ function renderFoot(){
          </div>`
       : `<button class="btn btn-sm btn-primary" id="sign-in-open" type="button" style="width:100%">Sign in to sync</button>`;
   }
-  $("side-foot").innerHTML = acct + `
+  $("side-foot").innerHTML = acct + signupBlock("foot") + `
     <p style="margin:${acct ? "10px" : "0"} 0 0">
       Literature from <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
       ${u ? "Your reading list syncs to your account."
@@ -3372,6 +3427,13 @@ document.addEventListener("submit", (ev) => {
     renameColl(S.coll, el ? el.value : "");
     S.renaming = false;
     render();
+    return;
+  }
+  if (ev.target.dataset && ev.target.dataset.newsletter) {
+    ev.preventDefault();
+    const el = ev.target.querySelector("input[type=email]");
+    const v = ((el && el.value) || "").trim();
+    if (v) subscribe(v);
     return;
   }
   if (ev.target.id === "email-form") {

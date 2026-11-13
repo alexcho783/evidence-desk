@@ -124,6 +124,26 @@ h1,h2,h3{text-wrap:balance; margin:0}
   border:0; background:none; color:inherit; border-radius:var(--r-s); cursor:pointer}
 .welcome button:hover{background:color-mix(in srgb, var(--accent-ink) 12%, transparent)}
 .welcome button svg{width:15px; height:15px}
+/* The weekly email. The same markup appears under the examples on the home view and in the
+   sidebar foot, so the row wraps rather than assuming a width. */
+.signup{margin-top:30px; padding:16px 18px; border:1px solid var(--line-soft);
+  border-radius:var(--r-m); background:var(--surface-2)}
+.nl-h{font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--ink); margin:0}
+.nl-label{display:block; font-size:12.5px; color:var(--muted); margin:12px 0 6px}
+.nl-row{display:flex; flex-wrap:wrap; gap:8px}
+.nl-in{flex:1 1 180px; min-width:0; min-height:36px; padding:0 12px;
+  border-radius:var(--r-s); border:1px solid var(--line); background:var(--paper);
+  outline:0; font-size:14px; color:var(--ink)}
+.nl-in:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.nl-row .btn{min-height:36px}
+.nl-note{font-size:12.5px; color:var(--accent-ink); margin:9px 0 0}
+.nl-note[data-bad]{color:var(--weak)}
+.nl-fine{font-size:11.5px; color:var(--faint); line-height:1.5; margin:9px 0 0}
+.side-foot .signup{margin:0 0 10px; padding:12px 13px}
+.side-foot .nl-h{font-size:13px; line-height:1.35}
+.side-foot .nl-label{margin:9px 0 5px; font-size:11.5px}
+.side-foot .nl-in{flex:1 1 100%}
+.side-foot .nl-row .btn{width:100%}
 .sync-dot{width:7px; height:7px; border-radius:50%; background:var(--strong); flex:0 0 7px}
 .brand-mark{width:26px; height:26px; flex:0 0 26px; color:var(--accent)}
 .brand-name{font-size:15px; font-weight:600; letter-spacing:-.015em}
