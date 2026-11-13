@@ -66,16 +66,22 @@ function stripUtm(){
   } catch (e) {}
 }
 
-/* The only path ever sent. Built from an allow-list, the way pushUrl() in app.js is, so
-   the real query string cannot leak in: GoatCounter reads the campaign out of the query
-   string of the path it is handed, so the utm values go back on here, by themselves. */
+/* The only path ever sent: the pathname, with no query string on it at all. */
 function path(){
+  return location.pathname;
+}
+
+/* The only query string ever sent, built from an allow-list the way pushUrl() in app.js
+   is. A provider reads the campaign out of the query string, so the three utm values go
+   back here by themselves and nothing else can get in. Empty when nobody arrived from a
+   campaign, and an empty value is dropped rather than sent. */
+function campaignQuery(){
   const p = new URLSearchParams();
   if (campaign.source) p.set("utm_source", campaign.source);
   if (campaign.medium) p.set("utm_medium", campaign.medium);
   if (campaign.campaign) p.set("utm_campaign", campaign.campaign);
   const qs = p.toString();
-  return location.pathname + (qs ? "?" + qs : "");
+  return qs ? "?" + qs : "";
 }
 
 /* Event names are matched against this rather than passed through, so a caller cannot turn
@@ -97,9 +103,28 @@ const PROVIDERS = {
       s.async = true;
       s.src = "https://gc.zgo.at/count.js";
       s.setAttribute("data-goatcounter", "https://" + encodeURIComponent(site) + ".goatcounter.com/count");
-      s.addEventListener("load", onReady);
+      s.addEventListener("load", () => { this.seal(); onReady(); });
       s.addEventListener("error", () => {});
       document.head.appendChild(s);
+    },
+
+    /* count.js assembles its payload in get_data(), where it sets q to location.search
+       outright. That is not reachable through the settings or through count()'s own
+       arguments, and location.search is the question somebody typed, so without this the
+       search text goes out on every hit beside the tidy path above. get_data is a plain
+       property of window.goatcounter, so it is wrapped here and q is replaced with the
+       campaign parameters alone. Checked against count.js as served on 13 November 2026;
+       worth re-reading the payload in the network tab if GoatCounter ever changes it. */
+    seal(){
+      const gc = window.goatcounter;
+      if (!gc || typeof gc.get_data !== "function" || gc._sealed) return;
+      const original = gc.get_data;
+      gc.get_data = function(vars){
+        const d = original(vars || {});
+        if (d) d.q = campaignQuery();
+        return d;
+      };
+      gc._sealed = true;
     },
     pageview(p){
       window.goatcounter.count({path: p, title: "Conspectus"});
