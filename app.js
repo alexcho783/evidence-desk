@@ -2760,7 +2760,7 @@ function renderFoot(){
       Literature from <a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a>.
       ${u ? "Your reading list syncs to your account."
           : "Your reading list and notes stay in this browser. Searches are sent to the databases."}
-      ${A && A.enabled ? ` <button class="linkish" type="button" data-go="privacy">Privacy</button>.` : ""}
+      <button class="linkish" type="button" data-go="privacy">Privacy</button>.
     </p>`;
 }
 
@@ -2817,12 +2817,17 @@ function renderPrivacy(){
   const on = !!(A && A.enabled);
   const u = S.account.user;
   const contact = (A && A.contactEmail) || "";
+  const an = window.EDAnalytics || {enabled:false, provider:""};
+  const anName = an.provider === "goatcounter" ? "GoatCounter" : (an.provider || "");
+  const nl = NEWS();
 
   $("view-privacy").innerHTML = `<div class="eyebrow">Privacy</div>
   <h1 class="hero-h" style="font-size:clamp(24px,3.4vw,31px)">What this site stores</h1>
   <div class="prose" style="margin-top:20px">
     <p>Conspectus is built to hold as little about you as it can. Searching needs no account, and
-      without one nothing about you is stored anywhere except your own browser.</p>
+      ${an.enabled
+        ? `what you search for is never recorded. Visits are counted, in the narrow way set out below.`
+        : `without one nothing about you is stored anywhere except your own browser.`}</p>
 
     <h2>Without an account</h2>
     <ul>
@@ -2831,9 +2836,41 @@ function renderPrivacy(){
         you close the browser.</li>
       <li>Your <b>search terms are sent</b> to whichever database you are searching, because that
         is where the literature is. This site keeps no record of them.</li>
-      <li>No analytics, no advertising, no third-party tracking, no cookies of our own.</li>
+      <li>No advertising, no third-party tracking, no cookies of our own.</li>
     </ul>
-    <p>Everything your browser contacts while you use this site:</p>
+
+    <h2>Counting visits</h2>
+    ${an.enabled ? `
+    <p>Visits are counted with <b>${esc(anName)}</b>, which uses no cookies and builds no profile
+      of anyone. What it is sent:</p>
+    <ul>
+      <li>The <b>page path</b>, without its query string. Your question lives in the address bar as
+        <code>?q=…</code>, and that part is removed before anything is sent, so the search text never
+        reaches ${esc(anName)}.</li>
+      <li>A <b>count of searches by tab</b>, as one of three fixed words: medicine, psychology or
+        trials. Not what you searched for.</li>
+      <li>A <b>count of papers saved</b> and of <b>exports</b>, by file format. Not which papers.</li>
+      <li>The <b>campaign</b> a visit arrived on, when you followed a link from a post, so it is
+        possible to tell which post brought you here.</li>
+      <li>Whatever your browser sends with any request: your IP address, which ${esc(anName)} uses to
+        work out a rough country and then discards, and your browser and screen size.</li>
+    </ul>
+    <p>Not sent, ever: your search text, which papers you looked at or saved, your notes, your email
+      address, or anything that would let one visit be tied to another on a different day.</p>
+    <p>If your browser sends a <b>Do Not Track</b> or <b>Global Privacy Control</b> signal, the
+      counting script is not loaded and no request is made at all.</p>
+    ` : `<p>No analytics of any kind. Nothing counts your visit, and no counting script is loaded.</p>`}
+
+    ${nl.action ? `
+    <h2>The weekly email</h2>
+    <p>Signing up sends your email address to <b>${esc(nl.provider || "our email provider")}</b>, who
+      hold the list and send the email. This site never receives or stores your address: the form
+      posts straight from your browser to them. You can unsubscribe from any email they send, and
+      their own privacy notice covers what they keep.</p>
+    ` : ""}
+
+    <h2>Who your browser contacts</h2>
+    <p>Everything, while you use this site:</p>
     <ul>
       <li><a href="https://europepmc.org" target="_blank" rel="noopener">Europe PMC</a> receives your
         search terms on the Medicine tab.</li>
@@ -2841,9 +2878,21 @@ function renderPrivacy(){
         the Psychology tab, and whenever you ask for similar papers.</li>
       <li><a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>
         receives them on the Trials tab.</li>
+      <li><a href="https://www.crossref.org" target="_blank" rel="noopener">Crossref</a> is asked
+        whether a particular paper has been retracted or corrected. It receives that paper's DOI,
+        not your search.</li>
+      ${apiContact() ? `<li><a href="https://unpaywall.org" target="_blank" rel="noopener">Unpaywall</a>
+        is asked whether a paper has a free copy, and receives that paper's DOI and the contact
+        address published in this site's configuration.</li>` : ""}
       <li><b>Google Fonts</b> serves the typefaces, so it sees your IP address on every page load.</li>
       <li><b>unpkg</b>, or <b>jsDelivr</b> as a fallback, serves the library that builds Word files.
         It is fetched only when you export, never on a search.</li>
+      ${an.enabled && an.provider === "goatcounter"
+        ? `<li><b>GoatCounter</b> (gc.zgo.at) serves the counting script described above.</li>` : ""}
+      ${nl.action ? `<li><b>${esc(nl.provider || "the email provider")}</b> receives your email
+        address, and only if you sign up for the weekly email.</li>` : ""}
+      <li><a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a> holds accounts
+        and synced reading lists${on ? ", and is contacted only if you sign in" : ", and is not contacted at all, because accounts are switched off here"}.</li>
     </ul>
 
     <h2>With an account</h2>
