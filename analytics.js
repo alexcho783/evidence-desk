@@ -29,9 +29,53 @@ function optedOut(){
   } catch (e) { return false; }
 }
 
-/* The only path ever sent. location.search is deliberately absent. */
+/* ── Campaigns ─────────────────────────────────────────────────
+ * Posts link in with utm parameters on the end. They are read once here, kept for the
+ * provider and for the welcome banner, and then taken out of the address bar, so a link
+ * anybody copies off this page carries the question and not the advert it came from.
+ *
+ * This part runs whether or not analytics is switched on: a clean URL is worth having on
+ * its own. It runs before app.js, which is a module and therefore deferred, so the app's
+ * own readUrl() never sees a utm parameter. readUrl() would ignore one anyway, since it
+ * reads a fixed list of names, and pushUrl() builds its query from state alone and so
+ * cannot write one back.
+ */
+const UTM = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+
+const campaign = (() => {
+  const blank = {source:"", medium:"", campaign:""};
+  try {
+    const p = new URLSearchParams(location.search);
+    /* Narrowed to what a campaign name can contain, and capped, because these values go
+       on to a third party and arrive from whatever anyone chose to put in a link. */
+    const val = k => (p.get(k) || "").toLowerCase().replace(/[^a-z0-9_.-]/g, "").slice(0, 40);
+    return {source: val("utm_source"), medium: val("utm_medium"), campaign: val("utm_campaign")};
+  } catch (e) { return blank; }
+})();
+
+function stripUtm(){
+  try {
+    const p = new URLSearchParams(location.search);
+    let found = false;
+    for (const k of UTM) if (p.has(k)) { p.delete(k); found = true; }
+    if (!found) return;
+    const qs = p.toString();
+    /* Everything else in the query string is kept, and so is the fragment. replaceState
+       rather than pushState: arriving from a post is not a step to go Back to. */
+    history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+  } catch (e) {}
+}
+
+/* The only path ever sent. Built from an allow-list, the way pushUrl() in app.js is, so
+   the real query string cannot leak in: GoatCounter reads the campaign out of the query
+   string of the path it is handed, so the utm values go back on here, by themselves. */
 function path(){
-  return location.pathname;
+  const p = new URLSearchParams();
+  if (campaign.source) p.set("utm_source", campaign.source);
+  if (campaign.medium) p.set("utm_medium", campaign.medium);
+  if (campaign.campaign) p.set("utm_campaign", campaign.campaign);
+  const qs = p.toString();
+  return location.pathname + (qs ? "?" + qs : "");
 }
 
 /* Event names are matched against this rather than passed through, so a caller cannot turn
@@ -87,6 +131,8 @@ function run(fn){
 window.EDAnalytics = {
   enabled: ON,
   provider: ON ? CFG.provider : "",
+  /* Read by app.js to decide whether to greet someone who arrived from a post. */
+  campaign: campaign,
   pageview(){ run(() => P.pageview(path())); },
   event(name){ if (NAME.test(String(name || ""))) run(() => P.event(String(name))); }
 };
@@ -98,5 +144,8 @@ if (ON) {
   });
   window.EDAnalytics.pageview();
 }
+
+/* Last, so the pageview above still has the campaign to report. */
+stripUtm();
 
 })();
